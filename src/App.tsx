@@ -252,7 +252,7 @@ export default function App() {
   if (type === "리버브") {
 
     const convolver = ctx.createConvolver();
-    convolver.buffer = createHallReverbIR(ctx, 3.5, 3.2);
+    convolver.buffer = createHallReverbIR(ctx, 3.2, 2.5);
 
     const preDelay = ctx.createDelay();
     preDelay.delayTime.value = 0.035;
@@ -261,14 +261,14 @@ export default function App() {
     preDelay.connect(convolver);
     convolver.connect(wetGain);
 
-    dryGain.gain.value = 0.35;
+    dryGain.gain.value = 0.7;
     wetGain.gain.value = 1.0;
   }
 
   else if (type === "딜레이") {
 
     const delay = ctx.createDelay(2.0);
-    delay.delayTime.value = 0.45;
+    delay.delayTime.value = 0.5;
 
     const feedback = ctx.createGain();
     feedback.gain.value = 0.6;
@@ -293,14 +293,14 @@ export default function App() {
 
     const delay = ctx.createDelay();
 
-    delay.delayTime.value = 0.03;
+    delay.delayTime.value = 0.009;
 
     const lfo = ctx.createOscillator();
     lfo.type = "sine";
-    lfo.frequency.value = 1.8;
+    lfo.frequency.value = 0.9;
 
     const depth = ctx.createGain();
-    depth.gain.value = 0.01;
+    depth.gain.value = 0.0035;
 
     lfo.connect(depth);
     depth.connect(delay.delayTime);
@@ -310,8 +310,8 @@ export default function App() {
     input.connect(delay);
     delay.connect(wetGain);
 
-    dryGain.gain.value = 0.3;
-    wetGain.gain.value = 1.0;
+    dryGain.gain.value = 0.65;
+    wetGain.gain.value = 0.75;
   }
   else if (type === "플랜저") {
 
@@ -320,14 +320,14 @@ export default function App() {
     delay.delayTime.value = 0.004;
 
     const feedback = ctx.createGain();
-    feedback.gain.value = 0.75;
+    feedback.gain.value = 0.82;
 
     const lfo = ctx.createOscillator();
     lfo.type = "sine";
-    lfo.frequency.value = 0.25;
+    lfo.frequency.value = 0.9;
 
     const depth = ctx.createGain();
-    depth.gain.value = 0.0035;
+    depth.gain.value = 0.0055;
 
     lfo.connect(depth);
     depth.connect(delay.delayTime);
@@ -357,17 +357,17 @@ export default function App() {
     ap3.type = "allpass";
     ap4.type = "allpass";
 
-    ap1.frequency.value = 500;
-    ap2.frequency.value = 1000;
-    ap3.frequency.value = 1800;
-    ap4.frequency.value = 3200;
+    ap1.frequency.value = 350;
+    ap2.frequency.value = 700;
+    ap3.frequency.value = 1400;
+    ap4.frequency.value = 3000;
 
     const lfo = ctx.createOscillator();
     lfo.type = "triangle";
-    lfo.frequency.value = 0.4;
+    lfo.frequency.value = 1.1;
 
     const depth = ctx.createGain();
-    depth.gain.value = 900;
+    depth.gain.value = 1800;
 
     lfo.connect(depth);
 
@@ -393,15 +393,15 @@ export default function App() {
     const filter = ctx.createBiquadFilter();
 
     filter.type = "bandpass";
-    filter.Q.value = 10;
-    filter.frequency.value = 600;
+    filter.Q.value = 18;
+    filter.frequency.value = 350;
 
     const lfo = ctx.createOscillator();
     lfo.type = "triangle";
-    lfo.frequency.value = 2.8;
+    lfo.frequency.value = 2.2;
 
     const depth = ctx.createGain();
-    depth.gain.value = 2200;
+    depth.gain.value = 5200;
 
     lfo.connect(depth);
     depth.connect(filter.frequency);
@@ -412,24 +412,41 @@ export default function App() {
 
     filter.connect(wetGain);
 
-    dryGain.gain.value = 0.15;
+    dryGain.gain.value = 0.7;
     wetGain.gain.value = 1.0;
   }
-  else if (type === '클리핑') {
+  else if (type === "클리핑") {
+
+    const preGain = ctx.createGain();
+    preGain.gain.value = 1.4;
+
     const shaper = ctx.createWaveShaper();
-    const curve = new Float32Array(44100);
-    for (let i = 0; i < 44100; ++i) {
-      const x = (i * 2) / 44100 - 1;
-      curve[i] = (53) * x * 20 / (Math.PI + 50 * Math.abs(x));
+
+    const samples = 44100;
+    const curve = new Float32Array(samples);
+
+    for (let i = 0; i < samples; i++) {
+        const x = i * 2 / samples - 1;
+        curve[i] = Math.tanh(2.5 * x);
     }
+
     shaper.curve = curve;
-    
-    input.connect(shaper);
-    shaper.connect(wetGain);
+    shaper.oversample = "4x";
+
+    const postGain = ctx.createGain();
+    postGain.gain.value = 0.10;
+
+    input.connect(preGain);
+    preGain.connect(shaper);
+    shaper.connect(postGain);
+    postGain.connect(wetGain);
+
+    dryGain.gain.value = 0.75;
+    wetGain.gain.value = 0.25;
   }
   else {
     // 이펙터가 없을 경우 원음만 출력
-    dryGain.gain.value = 0.9;
+    dryGain.gain.value = 1.0;
     wetGain.gain.value = 0.0;
   }
 
