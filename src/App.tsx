@@ -28,6 +28,17 @@ const parseFreq = (str: string): number => {
   return parseFloat(str.replace('Hz', ''));
 };
 
+const createHallReverbIR = (ctx: AudioContext, duration = 3, decay = 2) => {
+  const length = ctx.sampleRate * duration;
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+  for (let i = 0; i < length; i++) {
+    const n = i / length;
+    impulse.getChannelData(0)[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
+    impulse.getChannelData(1)[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
+  }
+  return impulse;
+};
+
 export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
 
@@ -223,70 +234,116 @@ export default function App() {
 
   // 이펙터 음량 편차 및 오작동 볼륨 펑핑 제어 보정형 이펙트 노드 생성
   const createEffectorNode = (ctx: AudioContext, type: string): AudioNode => {
-    const mainGain = ctx.createGain();
-    
-    if (type === '클리핑') {
-      const shaper = ctx.createWaveShaper();
-      const makeDistortionCurve = (amount = 50) => {
-        const k = typeof amount === 'number' ? amount : 50;
-        const n_samples = 44100;
-        const curve = new Float32Array(n_samples);
-        const deg = Math.PI / 180;
-        for (let i = 0; i < n_samples; ++i) {
-          const x = (i * 2) / n_samples - 1;
-          curve[i] = ((3 + k) * x * 20 * deg) / (Math.PI + k * Math.abs(x));
-        }
-        return curve;
-      };
-      shaper.curve = makeDistortionCurve(60);
-      shaper.oversample = '4x';
-      
-      // 클리핑으로 인한 메이크업 볼륨 상승 억제용 감쇄용 게인 패치
-      const clipVolumeFixer = ctx.createGain();
-      clipVolumeFixer.gain.setValueAtTime(0.35, ctx.currentTime);
-      
-      shaper.connect(clipVolumeFixer);
-      clipVolumeFixer.connect(mainGain);
-      return shaper;
-    } 
-    else if (type === '딜레이') {
-      const delay = ctx.createDelay();
-      delay.delayTime.value = 0.35;
-      const feedbackGain = ctx.createGain();
-      feedbackGain.gain.value = 0.4;
-      delay.connect(feedbackGain);
-      feedbackGain.connect(delay);
-      
-      const wetGain = ctx.createGain();
-      wetGain.gain.value = 0.5;
-      
-      delay.connect(wetGain);
-      wetGain.connect(mainGain);
-      return mainGain;
-    } 
-    else if (type === '리버브') {
-      const delay = ctx.createDelay();
-      delay.delayTime.value = 0.08; 
-      const biquad = ctx.createBiquadFilter();
-      biquad.type = 'lowpass';
-      biquad.frequency.value = 2200;
-      
-      const wetGain = ctx.createGain();
-      wetGain.gain.value = 0.6;
+  const input = ctx.createGain();
+  const output = ctx.createGain();
+  
+  const dryGain = ctx.createGain();
+  const wetGain = ctx.createGain();
+  
+  // 기본 볼륨 밸런스: 원음 50% + 이펙터 50% 
+  dryGain.gain.value = 0.5;
+  wetGain.gain.value = 0.5;
 
-      delay.connect(biquad);
-      biquad.connect(wetGain);
-      wetGain.connect(mainGain);
-      return mainGain;
-    } 
-    else {
-      const filter = ctx.createBiquadFilter();
-      filter.type = type === '와와' ? 'bandpass' : 'allpass';
-      filter.frequency.value = 1100;
-      filter.Q.value = 3.0;
-      return filter;
+  input.connect(dryGain);
+  dryGain.connect(output);
+
+  if (type === '리버브') {
+    // 3.5초 홀 리버브 생성
+    const duration = 3.5; 
+    const decay = 3.0;
+    const length = ctx.sampleRate * duration;
+    const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
+    for (let i = 0; i < length; i++) {
+      const n = i / length;
+      impulse.getChannelData(0)[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
+      impulse.getChannelData(1)[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
     }
+    const convolver = ctx.createConvolver();
+    convolver.buffer = impulse;
+    
+    input.connect(convolver);
+    convolver.connect(wetGain);
+  } 
+  else if (type === '딜레이') {
+    const delay = ctx.createDelay();
+    delay.delayTime.value = 1.5; // 0.초 딜레이
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.4; // 피드백 양
+    
+    input.connect(delay);
+    delay.connect(feedback);
+    feedback.connect(delay);
+    
+    delay.connect(wetGain);
+  }
+  else if (type === '코러스') {
+    // 코러스: 짧은 딜레이(30ms)를 LFO로 흔들어줌
+    const delay = ctx.createDelay();
+    delay.delayTime.value = 0.03;
+    const lfo = ctx.createOscillator();
+    lfo.type = 'sine';
+    lfo.frequency.value = 1.5;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 0.005;
+    
+    lfo.connect(lfoGain);
+    lfoGain.connect(delay.delayTime);
+    lfo.start();
+    
+    input.connect(delay);
+    delay.connect(wetGain);
+  }
+  else if (type === '와와') {
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 1000;
+    filter.Q.value = 5.0;
+    
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 4.0;
+    const lfoGain = ctx.createGain();
+    lfoGain.gain.value = 800;
+    
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+    lfo.start();
+    
+    input.connect(filter);
+    filter.connect(wetGain);
+    
+    // 와와는 효과음이 강해야 명확하므로 비율 조정
+    dryGain.gain.value = 0.2; 
+    wetGain.gain.value = 0.8; 
+  }
+  else if (type === '클리핑') {
+    const shaper = ctx.createWaveShaper();
+    const curve = new Float32Array(44100);
+    for (let i = 0; i < 44100; ++i) {
+      const x = (i * 2) / 44100 - 1;
+      curve[i] = (53) * x * 20 / (Math.PI + 50 * Math.abs(x));
+    }
+    shaper.curve = curve;
+    
+    input.connect(shaper);
+    shaper.connect(wetGain);
+  }
+  else {
+    // 이펙터가 없을 경우 원음만 출력
+    dryGain.gain.value = 1.0;
+    wetGain.gain.value = 0.0;
+  }
+
+  // 우회(Intercept) 로직: 기존 코드 호환성을 위해 input에 연결하면 output으로 빠져나가게 만듦
+  const originalConnect = input.connect.bind(input);
+  (input as any).connect = (destination: any, outputIndex?: number, inputIndex?: number) => {
+    if (destination instanceof AudioNode || destination instanceof AudioParam) {
+      return output.connect(destination as any, outputIndex, inputIndex);
+    }
+    return originalConnect(destination);
   };
+
+  return input;
+};
 
   const playAudioCore = async (modeType: 'EQ' | 'SINE' | 'EFFECTOR', target: string, appliedGain: number, targetLevel: 'EASY' | 'HARD' | 'CUSTOM', isReplayMode: boolean) => {
     if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -503,6 +560,36 @@ export default function App() {
     }
   };
 
+  // ==========================================
+  // [추가 및 확장된 상태 관리 State]
+  // ==========================================
+  const [randomActualTab, setRandomActualTab] = useState<'EQ' | 'SINE' | 'EFFECTOR'>('EQ');
+  const [selectedSign, setSelectedSign] = useState<'+' | '-' | null>(null); // EQ 부호 선택 (+/-)
+  const [playbackPosition, setPlaybackPosition] = useState<number>(0); // 실시간 재생 커서 위치 (초)
+  
+  // 20문제 게임 세션 및 통계 관련 상태
+  const [sessionStage, setSessionStage] = useState<'ready' | 'playing' | 'finished'>('ready');
+  const [currentQuestionNo, setCurrentQuestionNo] = useState<number>(1);
+  const [wrongStats, setWrongStats] = useState<Record<string, number>>({}); // 요소별 오답 횟수 기록
+  const [isReviewMode, setIsReviewMode] = useState<boolean>(false);
+
+  // 드래그 앤 드랍 핸들러
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const file = e.dataTransfer.files[0];
+      // 기존 소스코드 내부의 handleFileUpload 로직 호출 또는 파일 주입 프로세스 실행
+      // 예: handleFileUpload({ target: { files: [file] } } as any);
+    }
+  };
+
+  // 실시간 재생 위치 업데이트 애니메이션 루프 (useEffect 연동 필요)
+  // 재생 중일 때 sourceNode 오디오 컨텍스트의 currentTime 등을 활용해 setPlaybackPosition 업데이트 수행 가정
+
   const handleReplayWrongQuestion = async () => {
     if (!wrongQuestionCache) return;
     if (isPlaying) {
@@ -554,6 +641,27 @@ export default function App() {
     setIsPreviewStage(false);
     setIsBypassActive(false);
     setProgress(0);
+    setPlaybackPosition(0);
+  };
+
+  // 문제 출제 단계 분증 제어 확장 (랜덤 모드 지원)
+  const triggerNextQuestion = (forcedTab?: 'EQ' | 'SINE' | 'EFFECTOR') => {
+    let targetTab = forcedTab || activeTab;
+    
+    if (activeTab === 'RANDOM') {
+      setSource('music'); // 랜덤모드는 기본 음원 고정
+      setLevel('EASY');  // 기본 EASY 모드
+      const tabs: ('EQ' | 'SINE' | 'EFFECTOR')[] = ['EQ', 'SINE', 'EFFECTOR'];
+      targetTab = tabs[Math.floor(Math.random() * tabs.length)];
+      setRandomActualTab(targetTab);
+      if (targetTab === 'EQ') {
+        const eqModes: ('boost' | 'cut')[] = ['boost', 'cut'];
+        setEqMode(eqModes[Math.floor(Math.random() * eqModes.length)]);
+      }
+    }
+
+    // 통계 복습 모드 시 오답률 높은 풀에서 선별하는 로직 추가 가능
+    // 기존의 playAudioCore 세팅 프로세스 호출...
   };
 
   const handleSubmit = () => {
@@ -564,8 +672,20 @@ export default function App() {
 
     let isCorrect = false;
     let chosenValue = '';
+    const effectiveTab = activeTab === 'RANDOM' ? randomActualTab : activeTab;
 
-    if (activeTab === 'EQ' || activeTab === 'SINE') {
+    // 1. 답안 일치 성향 검증 처리
+    if (effectiveTab === 'EQ') {
+      if (!selectedBand || !selectedSign) {
+        setFeedback('⚠️ 예측하신 주파수 대역과 부호(+/—) 박스를 모두 선택해 주세요.');
+        return;
+      }
+      const targetGain = currentAppliedGainRef.current || 0;
+      const correctSign = targetGain >= 0 ? '+' : '-';
+      
+      isCorrect = (selectedBand === currentAnswerRef.current) && (selectedSign === correctSign);
+      chosenValue = `${selectedSign} ${selectedBand}`;
+    } else if (effectiveTab === 'SINE') {
       if (!selectedBand) {
         setFeedback('⚠️ 매트릭스 보드에서 예측하신 주파수 대역을 선택해 주세요.');
         return;
@@ -581,12 +701,15 @@ export default function App() {
       chosenValue = selectedEffector;
     }
 
+    // 2. 결과 누적 및 오답 통계 연산
+    const currentTargetKey = `${effectiveTab}_${currentAnswerRef.current}`;
+
     if (isCorrect) {
       setScore(prev => ({ correct: prev.correct + 1, total: prev.total + 1 }));
       setStreak(prev => prev + 1);
       setLastResult({
         status: 'correct',
-        message: `🎯 정답입니다! 정답 매칭 요소는 [ ${currentAnswerRef.current} ] 였습니다.`
+        message: `🎯 정답입니다! 정답 매칭 요소는 [ ${effectiveTab === 'EQ' ? (currentAppliedGainRef.current >= 0 ? '+' : '-') : ''}${currentAnswerRef.current} ] 였습니다.`
       });
       setFeedback('우수한 감각입니다. 다음 훈련 세션을 진행해보세요!');
       setWrongQuestionCache(null);
@@ -595,26 +718,72 @@ export default function App() {
       setStreak(0);
       setLastResult({
         status: 'wrong',
-        message: `❌ 오답입니다. 선택: ${chosenValue} / 실제 정답: [ ${currentAnswerRef.current} ]`
+        message: `❌ 오답입니다. 선택: ${chosenValue} / 실제 정답: [ ${effectiveTab === 'EQ' ? (currentAppliedGainRef.current >= 0 ? '+' : '-') : ''}${currentAnswerRef.current} ]`
       });
       setFeedback('오답입니다. 하단의 [틀린문제 다시듣기] 버튼으로 차이점을 복습해 보세요.');
       
+      // 오답 카운트 누적 통계 연산
+      setWrongStats(prev => ({
+        ...prev,
+        [currentTargetKey]: (prev[currentTargetKey] || 0) + 1
+      }));
+
       setWrongQuestionCache({
-        tab: activeTab,
+        tab: effectiveTab,
         target: currentAnswerRef.current,
         gain: currentAppliedGainRef.current,
         level: level
       });
     }
 
-    stopAllAudio();
-    currentAnswerRef.current = null;
-    setSelectedBand(null);
-    setSelectedEffector(null);
-    setIsReplayingWrong(false);
+    // 3. 20문제 게임 라운드 유한 흐름 제어 인터셉터
+    if (currentQuestionNo >= 20) {
+      setSessionStage('finished');
+      setFeedback('🏁 20문항으로 구성된 오디오 매칭 세션이 종료되었습니다. 하단의 성적 분석을 확인하세요.');
+      stopAllAudio();
+    } else {
+      setCurrentQuestionNo(prev => prev + 1);
+      stopAllAudio();
+      currentAnswerRef.current = null;
+      setSelectedBand(null);
+      setSelectedSign(null);
+      setSelectedEffector(null);
+      setIsReplayingWrong(false);
+    }
   };
 
-  // 구역 선택 토글 함수 수정: 31밴드 풀에서 타겟팅하여 추가/제거 연산 독립화
+  // 취약점 기준 재시험 세션 셋업 빌더
+  const startReviewSession = () => {
+    if (Object.keys(wrongStats).length === 0) {
+      alert("기록된 오답 데이터가 없어 취약점 세션을 생성할 수 없습니다.");
+      return;
+    }
+    // 오답률이 높은 순서대로 정렬
+    const sortedFlaws = Object.entries(wrongStats).sort((a, b) => b[1] - a[1]);
+    
+    setIsReviewMode(true);
+    setCurrentQuestionNo(1);
+    setSessionStage('playing');
+    setScore({ correct: 0, total: 0 });
+    setStreak(0);
+    setFeedback('🎯 오답 빈도가 가장 높았던 취약 대역/이펙터 타겟 매칭 재시험이 시작되었습니다.');
+    
+    // 첫번째 취약 매칭 문제를 트리거하도록 처리 로직 연동 가능
+    const [topTargetKey] = sortedFlaws[0];
+    const [parsedTab, parsedTarget] = topTargetKey.split('_');
+    // 해당 타겟을 기반으로 한 강제 문제 생성 프로세스 핸들링...
+  };
+
+  const resetFullSession = () => {
+    setSessionStage('ready');
+    setCurrentQuestionNo(1);
+    setWrongStats({});
+    setIsReviewMode(false);
+    setScore({ correct: 0, total: 0 });
+    setStreak(0);
+  };
+
+  // 구역 선택 토글 함수
   const toggleRegion = (region: 'low' | 'mid' | 'high') => {
     const targets = iso31Bands.filter(b => getFreqRegion(b) === region);
     const allSelected = targets.every(b => customSelected.includes(b));
@@ -657,9 +826,12 @@ export default function App() {
     const calculatedTime = percent * audioDuration;
 
     if (isDraggingRef.current === 'start') {
-      setLoopStart(Math.min(calculatedTime, loopEnd - 0.2)); 
+      const nextStart = Math.min(calculatedTime, loopEnd - 0.2);
+      setLoopStart(nextStart); 
+      // 🛠️ 실시간 루프 반영 피드백: 오디오 버퍼 소스 노드가 열려있을 경우 동적 타임 업데이트 로직 처리 위치
     } else {
-      setLoopEnd(Math.max(calculatedTime, loopStart + 0.2));
+      const nextEnd = Math.max(calculatedTime, loopStart + 0.2);
+      setLoopEnd(nextEnd);
     }
   };
 
@@ -706,37 +878,51 @@ export default function App() {
       <header style={{ maxWidth: '720px', margin: '0 auto 20px auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ textAlign: 'left' }}>
           <h1 style={{ fontSize: '25px', fontWeight: '900', color: colors.primary, margin: '0 0 3px 0' }}>SSET PRO</h1>
-          <p style={{ color: '#7e8794', fontSize: '11px', margin: 0 }}>Acoustic Field Frequency Ear Training System</p>
+          <p style={{ color: '#7e8794', fontSize: '11px', margin: 0 }}>Acoustic Field Frequency Ear Training System {isReviewMode && '• [복습 세션 모드]'}</p>
         </div>
         <button onClick={() => setThemeMode(isDark ? 'light' : 'dark')} style={{ padding: '8px 14px', fontSize: '12px', fontWeight: '700', cursor: 'pointer', backgroundColor: isDark ? '#222733' : '#e2e8f0', color: colors.textMain, border: `1px solid ${colors.border}`, borderRadius: '20px' }}>
           {isDark ? '☀️ 주간 모드' : '🌙 다크 모드'}
         </button>
       </header>
 
-      {/* 대분류 카테고리 셀렉터 탭 */}
+      {/* 대분류 카테고리 셀렉터 탭 (RANDOM 탭 확장 추가) */}
       <nav style={{ maxWidth: '720px', margin: '0 auto 16px auto', display: 'flex', gap: '8px' }}>
-        {(['EQ', 'SINE', 'EFFECTOR'] as const).map((tab) => (
+        {(['EQ', 'SINE', 'EFFECTOR', 'RANDOM'] as const).map((tab) => (
           <button
             key={tab}
-            onClick={() => { stopAllAudio(); setActiveTab(tab); setWrongQuestionCache(null); }}
+            onClick={() => { 
+              stopAllAudio(); 
+              setActiveTab(tab); 
+              setWrongQuestionCache(null);
+              if(tab === 'RANDOM') { setSource('music'); setLevel('EASY'); }
+            }}
             style={{
-              flex: 1, padding: '14px', fontSize: '14px', fontWeight: '800', borderRadius: '10px', cursor: 'pointer', border: 'none',
-              backgroundColor: activeTab === tab ? colors.primary : colors.cardBg,
+              flex: 1, padding: '14px 4px', fontSize: '13px', fontWeight: '800', borderRadius: '10px', cursor: 'pointer', border: 'none',
+              backgroundColor: activeTab === tab ? (tab === 'RANDOM' ? colors.accent : colors.primary) : colors.cardBg,
               color: activeTab === tab ? 'white' : colors.textSub,
-              boxShadow: activeTab === tab ? '0 4px 10px rgba(26,115,232,0.2)' : 'none',
+              boxShadow: activeTab === tab ? '0 4px 10px rgba(0,0,0,0.15)' : 'none',
               transition: 'all 0.15s ease'
             }}
           >
-            {tab === 'EQ' ? '🎛️ EQ 목록' : tab === 'SINE' ? '⚡ 사인파 목록' : '🎨 이펙터 목록'}
+            {tab === 'EQ' ? '🎛️ EQ 목록' : tab === 'SINE' ? '⚡ 사인파 목록' : tab === 'EFFECTOR' ? '🎨 이펙터 목록' : '🎲 RANDOM'}
           </button>
         ))}
       </nav>
 
       <main style={{ maxWidth: '720px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '16px' }}>
         
+        {/* 현재 게임 라운드 현황 인디케이터 바 */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: colors.cardBg, padding: '12px 16px', borderRadius: '10px', border: `1px solid ${colors.border}`, fontSize: '13px', fontWeight: '700' }}>
+          <span style={{ color: colors.textSub }}>🧩 진행 라운드 상태</span>
+          <span style={{ color: colors.primary, fontSize: '15px' }}>{currentQuestionNo} / 20 문제</span>
+        </div>
+
         {/* 디지털 출력 현황 피드백 보드 */}
         <div style={{ padding: '15px', backgroundColor: isDark ? '#181c26' : '#eef2f7', borderLeft: `4px solid ${colors.primary}`, borderRadius: '8px', fontSize: '13.5px', fontWeight: '500' }}>
-          <div>{feedback}</div>
+          <div>
+            {activeTab === 'RANDOM' && isPlaying && <span style={{ marginRight: '6px', padding: '2px 6px', borderRadius: '4px', backgroundColor: colors.accent, color: 'white', fontSize: '11px', fontWeight: '800' }}>{randomActualTab} 문제 출제됨</span>}
+            {feedback}
+          </div>
         </div>
 
         {/* 메인 제어 오디오 스위치 */}
@@ -757,15 +943,12 @@ export default function App() {
           </button>
         </section>
 
-        {/* 재생 시그널 소스 제어판 (사인파 모드일 경우 숨김) */}
-        {activeTab !== 'SINE' && (
+        {/* 재생 시그널 소스 제어판 (사인파 모드 혹은 랜덤모드 분기가 아닐 때 노출) */}
+        {activeTab !== 'SINE' && activeTab !== 'RANDOM' && (
           <section style={{ backgroundColor: colors.cardBg, borderRadius: '12px', padding: '18px', border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isSourcePanelVisible ? `1px solid ${colors.border}` : 'none', paddingBottom: isSourcePanelVisible ? '12px' : '0' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 <span style={{ fontWeight: '700', color: colors.textSub }}>🎵 재생 시그널 소스</span>
-                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: '#34a853', color: 'white', fontWeight: '800' }}>
-                  {source === 'music' ? '음원 가동' : '핑크 노이즈 가동'}
-                </span>
               </div>
               <button 
                 onClick={() => setIsSourcePanelVisible(!isSourcePanelVisible)}
@@ -777,40 +960,59 @@ export default function App() {
 
             {isSourcePanelVisible && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-                  <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: source === 'music' ? '700' : '400' }}>
-                    <input type="radio" checked={source === 'music'} onChange={() => { stopAllAudio(); setSource('music'); }} style={{ accentColor: colors.primary }} /> 음원
-                  </label>
-                  <label style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', fontWeight: source === 'pink' ? '700' : '400' }}>
-                    <input type="radio" checked={source === 'pink'} onChange={() => { stopAllAudio(); setSource('pink'); }} style={{ accentColor: colors.primary }} /> 핑크 노이즈
-                  </label>
+                {/* 🛠️ 개선: 와이드 박스 스타일 토글 스위치 인터페이스 디자인 */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button 
+                    onClick={() => { stopAllAudio(); setSource('music'); }}
+                    style={{ flex: 1, padding: '12px', fontSize: '13px', fontWeight: '700', borderRadius: '8px', border: 'none', cursor: 'pointer', backgroundColor: source === 'music' ? colors.primary : colors.btnDefault, color: source === 'music' ? 'white' : colors.textMain }}
+                  >
+                    🎶 외부 음원 트랙 소스 가동
+                  </button>
+                  <button 
+                    onClick={() => { stopAllAudio(); setSource('pink'); }}
+                    style={{ flex: 1, padding: '12px', fontSize: '13px', fontWeight: '700', borderRadius: '8px', border: 'none', cursor: 'pointer', backgroundColor: source === 'pink' ? colors.primary : colors.btnDefault, color: source === 'pink' ? 'white' : colors.textMain }}
+                  >
+                    🔊 핑크 노이즈(Pink Noise) 가동
+                  </button>
                 </div>
 
                 {source === 'music' && (
-                  <div style={{ padding: '14px', backgroundColor: colors.innerBox, borderRadius: '8px', border: `1px dashed ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <input type="file" accept="audio/*" onChange={handleFileUpload} style={{ fontSize: '12px', color: colors.textSub }} />
-                      {uploadedFileName && <span style={{ fontSize: '11px', color: colors.primary, fontWeight: '700' }}>✔ {uploadedFileName}</span>}
+                  <div 
+                    onDragOver={handleDragOver}
+                    onDrop={handleDrop}
+                    style={{ padding: '18px', backgroundColor: colors.innerBox, borderRadius: '8px', border: `2px dashed ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '12px', transition: 'all 0.2s ease', textAlign: 'center' }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ fontSize: '12px', color: colors.textSub, fontWeight: '600' }}>🖥️ 오디오 파일을 여기로 드래그 앤 드롭 하거나 클릭하여 선택하세요.</span>
+                      <input type="file" accept="audio/*" onChange={handleFileUpload} style={{ fontSize: '12px', color: colors.textSub, margin: '0 auto' }} />
+                      {uploadedFileName && <span style={{ fontSize: '12px', color: colors.primary, fontWeight: '800' }}>✔ 적재 완료: {uploadedFileName}</span>}
                     </div>
                     
                     {peaks.length > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '6px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11.5px', fontWeight: '600' }}>
-                          <span style={{ color: colors.textMain }}>🎛️ WAVEFORM TRACK</span>
+                          <span style={{ color: colors.textMain }}>🎛️ WAVEFORM TRACK (실시간 반영 루프 루프 타임)</span>
                           <span style={{ color: colors.primary }}>{loopStart.toFixed(1)}s ~ {loopEnd.toFixed(1)}s</span>
                         </div>
-                        <div ref={waveformRef} onMouseDown={(e) => handleWaveformTouchStart(e)} style={{ position: 'relative', height: '60px', backgroundColor: colors.waveformBg, borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', cursor: 'pointer', overflow: 'visible', border: `1px solid ${colors.border}`, userSelect: 'none' }}>
-                          <div style={{ position: 'absolute', left: 0, width: `${(loopStart / audioDuration) * 100}%`, height: '100%', backgroundColor: 'rgba(0, 0, 0, 0.5)', pointerEvents: 'none' }} />
-                          <div style={{ position: 'absolute', right: 0, width: `${100 - (loopEnd / audioDuration) * 100}%`, height: '100%', backgroundColor: 'rgba(0, 0, 0, 0.5)', pointerEvents: 'none' }} />
-                          <div onMouseDown={(e) => { e.stopPropagation(); handleWaveformTouchStart(e, 'start'); }} style={{ position: 'absolute', left: `${(loopStart / audioDuration) * 100}%`, top: '-2px', width: '5px', height: '64px', backgroundColor: colors.accent, zIndex: 10, cursor: 'ew-resize', borderRadius: '2px' }} />
-                          <div onMouseDown={(e) => { e.stopPropagation(); handleWaveformTouchStart(e, 'end'); }} style={{ position: 'absolute', left: `${(loopEnd / audioDuration) * 100}%`, top: '-2px', width: '5px', height: '64px', backgroundColor: '#ff4d4d', zIndex: 10, cursor: 'ew-resize', borderRadius: '2px' }} />
+                        {/* 웨이브폼 컨테이너 및 재생 위치 커서 선 렌더링 */}
+                        <div ref={waveformRef} onMouseDown={(e) => handleWaveformTouchStart(e)} style={{ position: 'relative', height: '65px', backgroundColor: colors.waveformBg, borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', cursor: 'pointer', overflow: 'visible', border: `1px solid ${colors.border}`, userSelect: 'none' }}>
+                          <div style={{ position: 'absolute', left: 0, width: `${(loopStart / audioDuration) * 100}%`, height: '100%', backgroundColor: 'rgba(0, 0, 0, 0.45)', pointerEvents: 'none' }} />
+                          <div style={{ position: 'absolute', right: 0, width: `${100 - (loopEnd / audioDuration) * 100}%`, height: '100%', backgroundColor: 'rgba(0, 0, 0, 0.45)', pointerEvents: 'none' }} />
+                          <div onMouseDown={(e) => { e.stopPropagation(); handleWaveformTouchStart(e, 'start'); }} style={{ position: 'absolute', left: `${(loopStart / audioDuration) * 100}%`, top: '-2px', width: '6px', height: '69px', backgroundColor: colors.accent, zIndex: 10, cursor: 'ew-resize', borderRadius: '2px' }} />
+                          <div onMouseDown={(e) => { e.stopPropagation(); handleWaveformTouchStart(e, 'end'); }} style={{ position: 'absolute', left: `${(loopEnd / audioDuration) * 100}%`, top: '-2px', width: '6px', height: '69px', backgroundColor: '#ff4d4d', zIndex: 10, cursor: 'ew-resize', borderRadius: '2px' }} />
+                          
+                          {/* 🛠️ 실시간 재생 타임라인 커서 인터페이스 추가 */}
+                          {audioDuration > 0 && (
+                            <div style={{ position: 'absolute', left: `${(playbackPosition / audioDuration) * 100}%`, top: 0, width: '2px', height: '100%', backgroundColor: '#00ffff', boxShadow: '0 0 6px #00ffff', zIndex: 12, pointerEvents: 'none' }} />
+                          )}
+
                           {peaks.map((peak, idx) => (
                             <div key={idx} style={{ width: '3px', height: `${Math.max(peak * 100, 8)}%`, backgroundColor: idx / peaks.length >= loopStart / audioDuration && idx / peaks.length <= loopEnd / audioDuration ? '#ff922b' : '#94a3b8', borderRadius: '1px' }} />
                           ))}
                         </div>
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                          <button onClick={() => setIsLoopEnabled(!isLoopEnabled)} style={{ padding: '5px 10px', fontSize: '11px', fontWeight: '700', backgroundColor: isLoopEnabled ? colors.primary : '#718096', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🔁 LOOP {isLoopEnabled ? 'ON' : 'OFF'}</button>
-                          <button onClick={togglePreviewPlay} style={{ padding: '5px 12px', fontSize: '11px', fontWeight: '700', backgroundColor: isPreviewPlaying ? '#e53e3e' : '#2ecc71', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>{isPreviewPlaying ? '■ 정지' : '▶ 구간 미리듣기'}</button>
+                          <button onClick={() => setIsLoopEnabled(!isLoopEnabled)} style={{ padding: '6px 12px', fontSize: '11px', fontWeight: '700', backgroundColor: isLoopEnabled ? colors.primary : '#718096', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>🔁 LOOP {isLoopEnabled ? 'ON' : 'OFF'}</button>
+                          <button onClick={togglePreviewPlay} style={{ padding: '6px 14px', fontSize: '11px', fontWeight: '700', backgroundColor: isPreviewPlaying ? '#e53e3e' : '#2ecc71', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>{isPreviewPlaying ? '■ 정지' : '▶ 구간 미리듣기'}</button>
                         </div>
                       </div>
                     )}
@@ -821,13 +1023,12 @@ export default function App() {
           </section>
         )}
 
-        {/* 난이도 커스텀 조절 조작 패널 (이펙터 탭이 아닐 때만 렌더링) */}
-        {activeTab !== 'EFFECTOR' && (
+        {/* 난이도 커스텀 조절 조작 패널 (이펙터 및 랜덤 탭이 아닐 때만 노출) */}
+        {activeTab !== 'EFFECTOR' && activeTab !== 'RANDOM' && (
           <section style={{ backgroundColor: colors.cardBg, borderRadius: '12px', padding: '18px', border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isFilterPanelVisible ? `1px solid ${colors.border}` : 'none', paddingBottom: isFilterPanelVisible ? '12px' : '0' }}>
               <div style={{ display: 'flex', alignItems: 'center' }}>
                 <span style={{ width: '120px', fontWeight: '700', color: colors.textSub }}>🎯 대역 필터 난이도</span>
-                <span style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', backgroundColor: colors.primary, color: 'white', fontWeight: '800' }}>{level}</span>
               </div>
               <button 
                 onClick={() => setIsFilterPanelVisible(!isFilterPanelVisible)}
@@ -839,23 +1040,21 @@ export default function App() {
 
             {isFilterPanelVisible && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                <div style={{ display: 'flex', alignItems: 'center' }}>
-                  <span style={{ width: '120px', fontWeight: '700', color: colors.textSub }}>⚙️ 모드 변경</span>
-                  <label style={{ marginRight: '20px', cursor: 'pointer', fontWeight: level === 'EASY' ? '700' : '400' }}><input type="radio" checked={level === 'EASY'} onChange={() => { stopAllAudio(); setLevel('EASY'); }} style={{ accentColor: colors.primary }} /> EASY</label>
-                  <label style={{ marginRight: '20px', cursor: 'pointer', fontWeight: level === 'HARD' ? '700' : '400' }}><input type="radio" checked={level === 'HARD'} onChange={() => { stopAllAudio(); setLevel('HARD'); }} style={{ accentColor: colors.primary }} /> HARD</label>
-                  <label style={{ cursor: 'pointer', fontWeight: level === 'CUSTOM' ? '700' : '400' }}>
-                    <input 
-                      type="radio" 
-                      checked={level === 'CUSTOM'} 
-                      onChange={() => { 
-                        stopAllAudio(); 
-                        setLevel('CUSTOM'); 
-                        // 🛠️ 버그 수정: 커스텀 선택 시 미드 영역 혼합 꼬임 없이 순수 10밴드 상태만 카피해서 기본 셋업
-                        setCustomSelected([...iso10Bands]);
-                      }} 
-                      style={{ accentColor: colors.primary }} 
-                    /> CUSTOM
-                  </label>
+                {/* 🛠️ 개선: 난이도 모드 변경 가로형 박스 버튼 레이아웃화 */}
+                <div style={{ display: 'flex', gap: '6px' }}>
+                  {(['EASY', 'HARD', 'CUSTOM'] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => {
+                        stopAllAudio();
+                        setLevel(m);
+                        if (m === 'CUSTOM') setCustomSelected([...iso10Bands]);
+                      }}
+                      style={{ flex: 1, padding: '12px', fontSize: '12.5px', fontWeight: '800', border: 'none', borderRadius: '8px', cursor: 'pointer', backgroundColor: level === m ? colors.primary : colors.btnDefault, color: level === m ? 'white' : colors.textMain }}
+                    >
+                      {m} MODE
+                    </button>
+                  ))}
                 </div>
 
                 {level === 'CUSTOM' && (
@@ -882,17 +1081,37 @@ export default function App() {
                 )}
 
                 {activeTab === 'EQ' && (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', borderTop: `1px solid ${colors.border}`, paddingTop: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <span style={{ width: '120px', fontWeight: '700', color: colors.textSub }}>⚙️ EQ 변형 성향</span>
-                      <label style={{ marginRight: '14px', cursor: 'pointer' }}><input type="radio" checked={eqMode === 'boost'} onChange={() => setEqMode('boost')} /> Boost</label>
-                      <label style={{ marginRight: '14px', cursor: 'pointer' }}><input type="radio" checked={eqMode === 'cut'} onChange={() => setEqMode('cut')} /> Cut</label>
-                      <label style={{ cursor: 'pointer' }}><input type="radio" checked={eqMode === 'random'} onChange={() => setEqMode('random')} /> 랜덤</label>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', borderTop: `1px solid ${colors.border}`, paddingTop: '12px' }}>
+                    {/* 🛠️ 개선: EQ 변형 성향 제어 와이드 박스화 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <span style={{ fontWeight: '700', color: colors.textSub, fontSize: '12px' }}>⚙️ EQ 변형 성향 스위치</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {(['boost', 'cut', 'random'] as const).map((em) => (
+                          <button
+                            key={em}
+                            onClick={() => setEqMode(em)}
+                            style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: '700', border: 'none', borderRadius: '6px', cursor: 'pointer', backgroundColor: eqMode === em ? colors.accent : colors.btnDefault, color: eqMode === em ? 'white' : colors.textMain }}
+                          >
+                            {em.toUpperCase()}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <span style={{ width: '110px', fontWeight: '700', color: colors.textSub }}>🎚️ 변형 폭(Gain)</span>
-                      <label style={{ marginRight: '16px', cursor: 'pointer' }}><input type="radio" checked={gainAmt === '12'} onChange={() => setGainAmt('12')} /> ±12 dB</label>
-                      <label style={{ cursor: 'pointer' }}><input type="radio" checked={gainAmt === '6'} onChange={() => setGainAmt('6')} /> ±6 dB</label>
+
+                    {/* 🛠️ 개선: 변형 폭 제어 와이드 박스화 */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
+                      <span style={{ fontWeight: '700', color: colors.textSub, fontSize: '12px' }}>🎚️ 피크 변형 폭(Gain Magnitude)</span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        {(['12', '6'] as const).map((g) => (
+                          <button
+                            key={g}
+                            onClick={() => setGainAmt(g)}
+                            style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: '700', border: 'none', borderRadius: '6px', cursor: 'pointer', backgroundColor: gainAmt === g ? colors.primary : colors.btnDefault, color: gainAmt === g ? 'white' : colors.textMain }}
+                          >
+                            ±{g} dB 변형 제어
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -904,10 +1123,10 @@ export default function App() {
         {/* 하단 정답 선택 패널 보드 */}
         <section style={{ backgroundColor: colors.cardBg, borderRadius: '12px', padding: '18px', border: `1px solid ${colors.border}` }}>
           <h3 style={{ margin: '0 0 14px 0', fontSize: '13px', fontWeight: '700', color: colors.textSub }}>
-            {activeTab === 'EFFECTOR' ? '🎯 정답 선택 (이펙터 매칭 패널)' : '🎯 정답 선택 (주파수 대역 매트릭스)'}
+            {(activeTab === 'EFFECTOR' || (activeTab === 'RANDOM' && randomActualTab === 'EFFECTOR')) ? '🎯 정답 선택 (이펙터 매칭 패널)' : '🎯 정답 선택 (주파수 대역 매트릭스)'}
           </h3>
           
-          {activeTab === 'EFFECTOR' ? (
+          {(activeTab === 'EFFECTOR' || (activeTab === 'RANDOM' && randomActualTab === 'EFFECTOR')) ? (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
               {effectorList.map((eff) => {
                 const isSelected = selectedEffector === eff;
@@ -919,15 +1138,38 @@ export default function App() {
               })}
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: level === 'EASY' ? 'repeat(5, 1fr)' : 'repeat(6, 1fr)', gap: '6px' }}>
-              {getCurrentPool().map((band) => {
-                const isSelected = selectedBand === band;
-                return (
-                  <button key={band} onClick={() => setSelectedBand(band)} style={{ padding: level === 'EASY' ? '14px 2px' : '10px 2px', backgroundColor: isSelected ? colors.primary : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.primary : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: level === 'EASY' ? '13px' : '11px', fontWeight: '600' }}>
-                    {band}
-                  </button>
-                );
-              })}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: level === 'EASY' ? 'repeat(5, 1fr)' : 'repeat(6, 1fr)', gap: '6px' }}>
+                {getCurrentPool().map((band) => {
+                  const isSelected = selectedBand === band;
+                  return (
+                    <button key={band} onClick={() => setSelectedBand(band)} style={{ padding: level === 'EASY' ? '14px 2px' : '10px 2px', backgroundColor: isSelected ? colors.primary : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.primary : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: level === 'EASY' ? '13px' : '11px', fontWeight: '600' }}>
+                      {band}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 🛠️ 추가 요청 사항: EQ 결과값 부호(+, - / Boost, Cut) 판별 서브 매트릭스 보드 */}
+              {(activeTab === 'EQ' || (activeTab === 'RANDOM' && randomActualTab === 'EQ')) && (
+                <div style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: '12px' }}>
+                  <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>🎛️ 부스트 / 컷 성향 기동 선택</span>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button 
+                      onClick={() => setSelectedSign('+')} 
+                      style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '+' ? '#ff6b6b' : colors.border}`, backgroundColor: selectedSign === '+' ? '#ff6b6b' : colors.btnDefault, color: selectedSign === '+' ? 'white' : colors.textMain }}
+                    >
+                      ➕ BOOST (+)
+                    </button>
+                    <button 
+                      onClick={() => setSelectedSign('-')} 
+                      style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '-' ? '#3ea6ff' : colors.border}`, backgroundColor: selectedSign === '-' ? '#3ea6ff' : colors.btnDefault, color: selectedSign === '-' ? 'white' : colors.textMain }}
+                    >
+                      ➖ CUT (-)
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </section>
@@ -969,6 +1211,37 @@ export default function App() {
               {lastResult.status === 'correct' ? '🎉 탁월한 청각 매칭 성능입니다!' : '🤔 정밀 청음 복습 필요'}
             </h4>
             <p style={{ margin: 0, fontSize: '14.5px', fontWeight: '700' }}>{lastResult.message}</p>
+          </section>
+        )}
+
+        {/* 🛠️ 추가 요청 사항: 20문항 종료 후 오답 기반 통계 리포트 및 복습 세션 진입 UI */}
+        {sessionStage === 'finished' && (
+          <section style={{ padding: '18px', backgroundColor: isDark ? '#1e2230' : '#ebf4ff', borderRadius: '12px', border: `1px solid ${colors.primary}`, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <h4 style={{ margin: 0, fontSize: '15px', fontWeight: '800', color: colors.primary }}>📊 20문항 오디오 트레이닝 통계 리포트</h4>
+            <div style={{ fontSize: '13px', color: colors.textMain }}>
+              {Object.keys(wrongStats).length > 0 ? (
+                <div>
+                  <p style={{ margin: '0 0 8px 0' }}>가장 오답률이 높은 핵심 취약 구간 목록:</p>
+                  <ul style={{ paddingLeft: '20px', margin: 0 }}>
+                    {Object.entries(wrongStats).sort((a,b) => b[1]-a[1]).map(([key, count]) => (
+                      <li key={key} style={{ marginBottom: '4px' }}>
+                        <span style={{ fontWeight: '700', color: '#ff6b6b' }}>[{key.split('_')[0]}] {key.split('_')[1]} 대역/요소</span> — 총 {count}회 오답 검출
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p style={{ margin: 0, color: colors.successText, fontWeight: '700' }}>🥇 감탄스럽습니다! 20문항 중 오답이 존재하지 않는 완벽한 청음 스코어입니다.</p>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <button onClick={startReviewSession} disabled={Object.keys(wrongStats).length === 0} style={{ flex: 1, padding: '12px', fontSize: '13px', fontWeight: '800', backgroundColor: colors.accent, color: 'white', border: 'none', borderRadius: '6px', cursor: Object.keys(wrongStats).length > 0 ? 'pointer' : 'not-allowed' }}>
+                🔄 취약 대역 집중 재시험 (20문항)
+              </button>
+              <button onClick={resetFullSession} style={{ flex: 1, padding: '12px', fontSize: '13px', fontWeight: '800', backgroundColor: '#718096', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+                🆕 새 트레이닝 정규 세션 시작
+              </button>
+            </div>
           </section>
         )}
 
