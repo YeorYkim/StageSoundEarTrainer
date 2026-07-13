@@ -720,6 +720,29 @@ export default function App() {
       setWrongQuestionCache(null);
       await playAudioCore('EFFECTOR', targetEffect, 0, 'EASY', false);
     }
+    else if (activeTab === 'RANDOM') {
+      setWrongQuestionCache(null);
+      const randTab = Math.random() > 0.5 ? 'EQ' : 'EFFECTOR';
+      setRandomActualTab(randTab);
+
+      if (randTab === 'EQ') {
+        const pool = iso10Bands; 
+        const randomIdx = Math.floor(Math.random() * pool.length);
+        const targetBand = pool[randomIdx];
+        const randMode = Math.random() > 0.5 ? 'boost' : 'cut';
+        setEqMode(randMode);
+        
+        let calculatedGain = parseFloat(gainAmt);
+        if (randMode === 'cut') calculatedGain = -calculatedGain;
+
+        await playAudioCore('EQ', targetBand, calculatedGain, 'EASY', false);
+      } else {
+        const randomIdx = Math.floor(Math.random() * effectorList.length);
+        const targetEffect = effectorList[randomIdx];
+        
+        await playAudioCore('EFFECTOR', targetEffect, 0, 'EASY', false);
+      }
+    }
   };
 
   // ==========================================
@@ -1106,7 +1129,7 @@ export default function App() {
         </section>
 
         {/* 재생 시그널 소스 제어판 (사인파 모드 혹은 랜덤모드 분기가 아닐 때 노출) */}
-        {activeTab !== 'SINE' && activeTab !== 'RANDOM' && (
+        {activeTab !== 'SINE' && (
           <section style={{ backgroundColor: colors.cardBg, borderRadius: '12px', padding: '18px', border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isSourcePanelVisible ? `1px solid ${colors.border}` : 'none', paddingBottom: isSourcePanelVisible ? '12px' : '0' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -1284,57 +1307,114 @@ export default function App() {
 
         {/* 하단 정답 선택 패널 보드 */}
         <section style={{ backgroundColor: colors.cardBg, borderRadius: '12px', padding: '18px', border: `1px solid ${colors.border}` }}>
-          <h3 style={{ margin: '0 0 14px 0', fontSize: '13px', fontWeight: '700', color: colors.textSub }}>
-            {(activeTab === 'EFFECTOR' || (activeTab === 'RANDOM' && randomActualTab === 'EFFECTOR')) ? '🎯 정답 선택 (이펙터 매칭 패널)' : '🎯 정답 선택 (주파수 대역 매트릭스)'}
-          </h3>
-          
-          {(activeTab === 'EFFECTOR' || (activeTab === 'RANDOM' && randomActualTab === 'EFFECTOR')) ? (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
-              {effectorList.map((eff) => {
-                const isSelected = selectedEffector === eff;
-                return (
-                  <button key={eff} onClick={() => setSelectedEffector(eff)} style={{ padding: '14px 2px', backgroundColor: isSelected ? colors.accent : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.accent : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}>
-                    {eff}
-                  </button>
-                );
-              })}
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: level === 'EASY' ? 'repeat(5, 1fr)' : 'repeat(6, 1fr)', gap: '6px' }}>
-                {getCurrentPool().map((band) => {
-                  const isSelected = selectedBand === band;
-                  return (
-                    <button key={band} onClick={() => setSelectedBand(band)} style={{ padding: level === 'EASY' ? '14px 2px' : '10px 2px', backgroundColor: isSelected ? colors.primary : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.primary : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: level === 'EASY' ? '13px' : '11px', fontWeight: '600' }}>
-                      {band}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* 🛠️ 추가 요청 사항: EQ 결과값 부호(+, - / Boost, Cut) 판별 서브 매트릭스 보드 */}
-              {(activeTab === 'EQ' || (activeTab === 'RANDOM' && randomActualTab === 'EQ')) && (
-                <div style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: '12px' }}>
-                  <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>🎛️ 부스트 / 컷 성향 기동 선택</span>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button 
-                      onClick={() => setSelectedSign('+')} 
-                      style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '+' ? '#ff6b6b' : colors.border}`, backgroundColor: selectedSign === '+' ? '#ff6b6b' : colors.btnDefault, color: selectedSign === '+' ? 'white' : colors.textMain }}
-                    >
-                      ➕ BOOST (+)
-                    </button>
-                    <button 
-                      onClick={() => setSelectedSign('-')} 
-                      style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '-' ? '#3ea6ff' : colors.border}`, backgroundColor: selectedSign === '-' ? '#3ea6ff' : colors.btnDefault, color: selectedSign === '-' ? 'white' : colors.textMain }}
-                    >
-                      ➖ CUT (-)
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </section>
+         <h3 style={{ margin: '0 0 14px 0', fontSize: '13px', fontWeight: '700', color: colors.textSub }}>
+           {activeTab === 'RANDOM' ? '🎯 정답 선택 (EQ 대역 및 이펙터 통합 매칭 패널)' : (activeTab === 'EFFECTOR' ? '🎯 정답 선택 (이펙터 매칭 패널)' : '🎯 정답 선택 (주파수 대역 매트릭스)')}
+         </h3>
+         
+         {activeTab === 'RANDOM' ? (
+           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+             <div>
+               <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>🎨 이펙터 보기 선택</span>
+               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+                 {effectorList.map((eff) => {
+                   const isSelected = selectedEffector === eff;
+                   return (
+                     <button 
+                       key={eff} 
+                       onClick={() => { setSelectedEffector(eff); setSelectedBand(null); setSelectedSign(null); }} 
+                       style={{ padding: '14px 2px', backgroundColor: isSelected ? colors.accent : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.accent : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}
+                     >
+                       {eff}
+                     </button>
+                   );
+                 })}
+               </div>
+             </div>
+      
+             <div style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: '16px' }}>
+               <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>🎛️ 주파수 대역 보기 선택</span>
+               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px' }}>
+                 {iso10Bands.map((band) => {
+                   const isSelected = selectedBand === band;
+                   return (
+                     <button 
+                       key={band} 
+                       onClick={() => { setSelectedBand(band); setSelectedEffector(null); }} 
+                       style={{ padding: '14px 2px', backgroundColor: isSelected ? colors.primary : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.primary : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
+                     >
+                       {band}
+                     </button>
+                   );
+                 })}
+               </div>
+        
+               <div style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: '12px', marginTop: '12px' }}>
+                 <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>🎛️ EQ 선택 시 필수: 부스트(+) / 컷(-) 성향 선택</span>
+                 <div style={{ display: 'flex', gap: '8px' }}>
+                   <button 
+                     onClick={() => { setSelectedSign('+'); setSelectedEffector(null); }} 
+                     style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '+' ? '#ff6b6b' : colors.border}`, backgroundColor: selectedSign === '+' ? '#ff6b6b' : colors.btnDefault, color: selectedSign === '+' ? 'white' : colors.textMain }}
+                   >
+                     ➕ BOOST (+)
+                   </button>
+                   <button 
+                     onClick={() => { setSelectedSign('-'); setSelectedEffector(null); }} 
+                     style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '-' ? '#3ea6ff' : colors.border}`, backgroundColor: selectedSign === '-' ? '#3ea6ff' : colors.btnDefault, color: selectedSign === '-' ? 'white' : colors.textMain }}
+                   >
+                     ➖ CUT (-)
+                   </button>
+                 </div>
+               </div>
+             </div>
+           </div>
+         ) : (
+           activeTab === 'EFFECTOR' ? (
+             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px' }}>
+               {effectorList.map((eff) => {
+                 const isSelected = selectedEffector === eff;
+                 return (
+                   <button key={eff} onClick={() => setSelectedEffector(eff)} style={{ padding: '14px 2px', backgroundColor: isSelected ? colors.accent : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.accent : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: '700' }}>
+                     {eff}
+                   </button>
+                 );
+               })}
+             </div>
+           ) : (
+             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+               <div style={{ display: 'grid', gridTemplateColumns: level === 'EASY' ? 'repeat(5, 1fr)' : 'repeat(6, 1fr)', gap: '6px' }}>
+                 {getCurrentPool().map((band) => {
+                   const isSelected = selectedBand === band;
+                   return (
+                     <button key={band} onClick={() => setSelectedBand(band)} style={{ padding: level === 'EASY' ? '14px 2px' : '10px 2px', backgroundColor: isSelected ? colors.primary : colors.btnDefault, color: isSelected ? 'white' : colors.textMain, border: `1px solid ${isSelected ? colors.primary : colors.border}`, borderRadius: '6px', cursor: 'pointer', fontSize: level === 'EASY' ? '13px' : '11px', fontWeight: '600' }}>
+                       {band}
+                     </button>
+                   );
+                 })}
+               </div>
+       
+               {activeTab === 'EQ' && (
+                 <div style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: '12px' }}>
+                   <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>🎛️ 부스트 / 컷 성향 기동 선택</span>
+                   <div style={{ display: 'flex', gap: '8px' }}>
+                     <button 
+                       onClick={() => setSelectedSign('+')} 
+                       style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '+' ? '#ff6b6b' : colors.border}`, backgroundColor: selectedSign === '+' ? '#ff6b6b' : colors.btnDefault, color: selectedSign === '+' ? 'white' : colors.textMain }}
+                     >
+                       ➕ BOOST (+)
+                     </button>
+                     <button 
+                       onClick={() => setSelectedSign('-')} 
+                       style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '-' ? '#3ea6ff' : colors.border}`, backgroundColor: selectedSign === '-' ? '#3ea6ff' : colors.btnDefault, color: selectedSign === '-' ? 'white' : colors.textMain }}
+                     >
+                       ➖ CUT (-)
+                     </button>
+                   </div>
+                 </div>
+               )}
+             </div>
+           )
+         )}
+       </section>
 
         {/* 조작 액션 커맨드 컨트롤러 */}
         <section style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
