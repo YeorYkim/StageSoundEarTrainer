@@ -234,86 +234,186 @@ export default function App() {
 
   // 이펙터 음량 편차 및 오작동 볼륨 펑핑 제어 보정형 이펙트 노드 생성
   const createEffectorNode = (ctx: AudioContext, type: string): AudioNode => {
+
   const input = ctx.createGain();
   const output = ctx.createGain();
-  
+
   const dryGain = ctx.createGain();
   const wetGain = ctx.createGain();
-  
-  // 기본 볼륨 밸런스: 원음 50% + 이펙터 50% 
-  dryGain.gain.value = 0.5;
-  wetGain.gain.value = 0.5;
+
+  dryGain.gain.value = 0.25;
+  wetGain.gain.value = 1.0;
 
   input.connect(dryGain);
   dryGain.connect(output);
 
-  if (type === '리버브') {
-    // 3.5초 홀 리버브 생성
-    const duration = 3.5; 
-    const decay = 3.0;
-    const length = ctx.sampleRate * duration;
-    const impulse = ctx.createBuffer(2, length, ctx.sampleRate);
-    for (let i = 0; i < length; i++) {
-      const n = i / length;
-      impulse.getChannelData(0)[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
-      impulse.getChannelData(1)[i] = (Math.random() * 2 - 1) * Math.pow(1 - n, decay);
-    }
+  wetGain.connect(output);
+
+  if (type === "리버브") {
+
     const convolver = ctx.createConvolver();
-    convolver.buffer = impulse;
-    
-    input.connect(convolver);
+    convolver.buffer = createHallReverbIR(ctx, 3.5, 3.2);
+
+    const preDelay = ctx.createDelay();
+    preDelay.delayTime.value = 0.035;
+
+    input.connect(preDelay);
+    preDelay.connect(convolver);
     convolver.connect(wetGain);
-  } 
-  else if (type === '딜레이') {
-    const delay = ctx.createDelay();
-    delay.delayTime.value = 1.5; // 0.초 딜레이
+
+    dryGain.gain.value = 0.35;
+    wetGain.gain.value = 1.0;
+  }
+
+  else if (type === "딜레이") {
+
+    const delay = ctx.createDelay(2.0);
+    delay.delayTime.value = 0.45;
+
     const feedback = ctx.createGain();
-    feedback.gain.value = 0.4; // 피드백 양
-    
+    feedback.gain.value = 0.6;
+
+    const lowpass = ctx.createBiquadFilter();
+    lowpass.type = "lowpass";
+    lowpass.frequency.value = 3500;
+
     input.connect(delay);
+
+    delay.connect(lowpass);
+    lowpass.connect(feedback);
+    feedback.connect(delay);
+
+    delay.connect(wetGain);
+
+    dryGain.gain.value = 0.45;
+    wetGain.gain.value = 1.0;
+  }
+
+  else if (type === "코러스") {
+
+    const delay = ctx.createDelay();
+
+    delay.delayTime.value = 0.03;
+
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 1.8;
+
+    const depth = ctx.createGain();
+    depth.gain.value = 0.01;
+
+    lfo.connect(depth);
+    depth.connect(delay.delayTime);
+
+    lfo.start();
+
+    input.connect(delay);
+    delay.connect(wetGain);
+
+    dryGain.gain.value = 0.3;
+    wetGain.gain.value = 1.0;
+  }
+  else if (type === "플랜저") {
+
+    const delay = ctx.createDelay();
+
+    delay.delayTime.value = 0.004;
+
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.75;
+
+    const lfo = ctx.createOscillator();
+    lfo.type = "sine";
+    lfo.frequency.value = 0.25;
+
+    const depth = ctx.createGain();
+    depth.gain.value = 0.0035;
+
+    lfo.connect(depth);
+    depth.connect(delay.delayTime);
+
+    lfo.start();
+
+    input.connect(delay);
+
     delay.connect(feedback);
     feedback.connect(delay);
-    
+
     delay.connect(wetGain);
+
+    dryGain.gain.value = 0.25;
+    wetGain.gain.value = 1.0;
   }
-  else if (type === '코러스') {
-    // 코러스: 짧은 딜레이(30ms)를 LFO로 흔들어줌
-    const delay = ctx.createDelay();
-    delay.delayTime.value = 0.03;
+
+  else if (type === "페이저") {
+
+    const ap1 = ctx.createBiquadFilter();
+    const ap2 = ctx.createBiquadFilter();
+    const ap3 = ctx.createBiquadFilter();
+    const ap4 = ctx.createBiquadFilter();
+
+    ap1.type = "allpass";
+    ap2.type = "allpass";
+    ap3.type = "allpass";
+    ap4.type = "allpass";
+
+    ap1.frequency.value = 500;
+    ap2.frequency.value = 1000;
+    ap3.frequency.value = 1800;
+    ap4.frequency.value = 3200;
+
     const lfo = ctx.createOscillator();
-    lfo.type = 'sine';
-    lfo.frequency.value = 1.5;
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 0.005;
-    
-    lfo.connect(lfoGain);
-    lfoGain.connect(delay.delayTime);
+    lfo.type = "triangle";
+    lfo.frequency.value = 0.4;
+
+    const depth = ctx.createGain();
+    depth.gain.value = 900;
+
+    lfo.connect(depth);
+
+    depth.connect(ap1.frequency);
+    depth.connect(ap2.frequency);
+    depth.connect(ap3.frequency);
+    depth.connect(ap4.frequency);
+
     lfo.start();
-    
-    input.connect(delay);
-    delay.connect(wetGain);
+
+    input.connect(ap1);
+    ap1.connect(ap2);
+    ap2.connect(ap3);
+    ap3.connect(ap4);
+    ap4.connect(wetGain);
+
+    dryGain.gain.value = 0.3;
+    wetGain.gain.value = 1.0;
   }
-  else if (type === '와와') {
+
+  else if (type === "와와") {
+
     const filter = ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.value = 1000;
-    filter.Q.value = 5.0;
-    
+
+    filter.type = "bandpass";
+    filter.Q.value = 10;
+    filter.frequency.value = 600;
+
     const lfo = ctx.createOscillator();
-    lfo.frequency.value = 4.0;
-    const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 800;
-    
-    lfo.connect(lfoGain);
-    lfoGain.connect(filter.frequency);
+    lfo.type = "triangle";
+    lfo.frequency.value = 2.8;
+
+    const depth = ctx.createGain();
+    depth.gain.value = 2200;
+
+    lfo.connect(depth);
+    depth.connect(filter.frequency);
+
     lfo.start();
-    
+
     input.connect(filter);
+
     filter.connect(wetGain);
-    
-    // 와와는 효과음이 강해야 명확하므로 비율 조정
-    dryGain.gain.value = 0.2; 
-    wetGain.gain.value = 0.8; 
+
+    dryGain.gain.value = 0.15;
+    wetGain.gain.value = 1.0;
   }
   else if (type === '클리핑') {
     const shaper = ctx.createWaveShaper();
@@ -329,7 +429,7 @@ export default function App() {
   }
   else {
     // 이펙터가 없을 경우 원음만 출력
-    dryGain.gain.value = 1.0;
+    dryGain.gain.value = 0.9;
     wetGain.gain.value = 0.0;
   }
 
@@ -464,62 +564,107 @@ export default function App() {
     }
 
     if (modeType === 'EFFECTOR') {
-      const sourceNode = ctx.createBufferSource();
-      if (source === 'pink') {
-        sourceNode.buffer = createPinkNoiseBuffer(ctx);
-        sourceNode.loop = true;
-      } else {
-        sourceNode.buffer = userAudioBufferRef.current;
-        if (isLoopEnabled) sourceNode.loop = true;
-        sourceNode.loopStart = loopStart;
-        sourceNode.loopEnd = loopEnd;
+
+  const sourceNode = ctx.createBufferSource();
+
+  if (source === "pink") {
+    sourceNode.buffer = createPinkNoiseBuffer(ctx);
+    sourceNode.loop = true;
+  } else {
+    sourceNode.buffer = userAudioBufferRef.current;
+
+    if (isLoopEnabled)
+      sourceNode.loop = true;
+
+    sourceNode.loopStart = loopStart;
+    sourceNode.loopEnd = loopEnd;
+  }
+
+  const effectNode = createEffectorNode(ctx, target);
+
+  sourceNode.connect(effectNode);
+
+  effectNode.connect(eqGain);
+
+  sourceNode.connect(bypassGain);
+
+  if (source === "music")
+    sourceNode.start(0, loopStart);
+  else
+    sourceNode.start();
+
+  sourceNodeRef.current = sourceNode;
+  effectNodeRef.current = effectNode;
+
+  if (isReplayMode) {
+
+    eqGain.gain.setValueAtTime(1, ctx.currentTime);
+    bypassGain.gain.setValueAtTime(0, ctx.currentTime);
+
+    setProgress(100);
+
+    setIsPreviewStage(false);
+
+    setFeedback("🔁 오답 문제를 다시 재생합니다.");
+
+    return;
+
+  }
+
+  setProgress(0);
+
+  setIsPreviewStage(true);
+
+  eqGain.gain.setValueAtTime(0, ctx.currentTime);
+
+  bypassGain.gain.setValueAtTime(1, ctx.currentTime);
+
+  setFeedback("🎧 원음을 먼저 재생합니다.");
+
+  if (timerIdRef.current)
+      clearInterval(timerIdRef.current);
+
+  let elapsed = 0;
+
+  const previewTime = source === "pink" ? 5000 : 8000;
+
+  timerIdRef.current = setInterval(() => {
+
+      elapsed += 50;
+
+      setProgress(elapsed / previewTime * 100);
+
+      if (elapsed >= previewTime) {
+
+          clearInterval(timerIdRef.current);
+
+          setIsPreviewStage(false);
+
+          setFeedback("🎛 이펙터 적용!");
+
+          bypassGain.gain.cancelScheduledValues(ctx.currentTime);
+
+          eqGain.gain.cancelScheduledValues(ctx.currentTime);
+
+          bypassGain.gain.setValueAtTime(1, ctx.currentTime);
+
+          eqGain.gain.setValueAtTime(0, ctx.currentTime);
+
+          bypassGain.gain.linearRampToValueAtTime(
+              0,
+              ctx.currentTime + 0.35
+          );
+
+          eqGain.gain.linearRampToValueAtTime(
+              1,
+              ctx.currentTime + 0.35
+          );
+
       }
 
-      const effectorNode = createEffectorNode(ctx, target);
-      
-      sourceNode.connect(effectorNode);
-      effectorNode.connect(eqGain);
-      sourceNode.connect(bypassGain);
+  },50);
 
-      if (source === 'music') {
-        sourceNode.start(0, loopStart);
-      } else {
-        sourceNode.start(0);
-      }
-      sourceNodeRef.current = sourceNode;
-      effectNodeRef.current = effectorNode;
-
-      if (isReplayMode) {
-        setIsPreviewStage(false);
-        setProgress(100);
-        setFeedback(`🔁 [오답 다시듣기] 이펙터 사운드가 즉시 처리되어 흐르는 중입니다.`);
-      } else {
-        setIsPreviewStage(true);
-        setProgress(0);
-        eqGain.gain.setValueAtTime(0, ctx.currentTime);
-        bypassGain.gain.setValueAtTime(1.0, ctx.currentTime);
-        setFeedback(`🎧 이펙트 미적용 원음 모니터링 가동 중 (${source === 'pink' ? '핑크노이즈 5초' : '음원 8초'})`);
-
-        if (timerIdRef.current) clearInterval(timerIdRef.current);
-        let currentMs = 0;
-        const totalMs = source === 'pink' ? 5000 : 8000; 
-        const intervalMs = 50; 
-
-        timerIdRef.current = setInterval(() => {
-          currentMs += intervalMs;
-          setProgress(Math.min((currentMs / totalMs) * 100, 100));
-          if (currentMs >= totalMs) {
-            clearInterval(timerIdRef.current);
-            setIsPreviewStage(false);
-            setFeedback(`🔊 특수 음향 이펙트 가동! 걸려있는 오디오 이펙터를 맞춰 보세요.`);
-            if (eqGainNodeRef.current && bypassGainNodeRef.current) {
-              eqGainNodeRef.current.gain.setValueAtTime(1.0, ctx.currentTime);
-              bypassGainNodeRef.current.gain.setValueAtTime(0, ctx.currentTime);
-            }
-          }
-        }, intervalMs);
-      }
-    }
+}
   };
 
   const togglePlayPause = async () => {
@@ -966,7 +1111,7 @@ export default function App() {
                     onClick={() => { stopAllAudio(); setSource('music'); }}
                     style={{ flex: 1, padding: '12px', fontSize: '13px', fontWeight: '700', borderRadius: '8px', border: 'none', cursor: 'pointer', backgroundColor: source === 'music' ? colors.primary : colors.btnDefault, color: source === 'music' ? 'white' : colors.textMain }}
                   >
-                    🎶 외부 음원 트랙 소스 가동
+                    🎶 외부 음원 트랙
                   </button>
                   <button 
                     onClick={() => { stopAllAudio(); setSource('pink'); }}
