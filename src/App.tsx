@@ -43,7 +43,7 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<'dark' | 'light'>('dark');
 
   // 훈련 대분류 카테고리 탭: 'EQ' | 'SINE' (사인파) | 'EFFECTOR' (이펙터)
-  const [activeTab, setActiveTab] = useState<'EQ' | 'SINE' | 'EFFECTOR'>('EQ');
+  const [activeTab, setActiveTab] = useState<'EQ' | 'SINE' | 'EFFECTOR' | 'RANDOM'>('EQ');
 
   // 난이도 및 레이아웃 숨김 상태
   const [level, setLevel] = useState<'EASY' | 'HARD' | 'CUSTOM'>('EASY');
