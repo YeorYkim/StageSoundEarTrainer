@@ -161,6 +161,14 @@ export default function App() {
 
       userAudioBufferRef.current = audioBuffer;
 
+      setAudioDuration(audioBuffer.duration);
+      setLoopStart(0);
+      setLoopEnd(audioBuffer.duration);
+
+      setUploadedFileName(file.name);
+
+      generatePeaks(audioBuffer);
+
       setSource("music");
 
       setFeedback(`✅ ${file.name} 불러오기 완료`);
@@ -1208,7 +1216,7 @@ export default function App() {
                               await audioCtxRef.current.resume();
                             }
 
-                            fileInputRef.current?.click();
+                          fileInputRef.current?.click();
                           }}
                           style={{
                             padding: "10px 18px",
