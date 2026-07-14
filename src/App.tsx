@@ -52,7 +52,7 @@ export default function App() {
   
   // CUSTOM 모드 전환 시 초기 상태를 10밴드 카피본으로 고정
   const [customSelected, setCustomSelected] = useState<string[]>([...iso10Bands]); 
-  const [eqMode, setEqMode] = useState<'boost' | 'cut' | 'random'>('boost');
+  const [eqMode, setEqMode] = useState<'boost' | 'cut' | 'random'>('random');
   const [gainAmt, setGainAmt] = useState<'12' | '6'>('12');
   
   // 소스 디폴트 순서 조정 (음원 -> 핑크노이즈)
@@ -98,6 +98,7 @@ export default function App() {
   const audioCtxRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const oscillatorNodeRef = useRef<OscillatorNode | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   // 오디오 체인 제어용 필터/이펙트 바이패스 게인 노드
   const filterNodeRef = useRef<BiquadFilterNode | null>(null);
@@ -135,25 +136,43 @@ export default function App() {
     setPeaks(extractedPeaks);
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement> | { target: { files: FileList } }
+  ) => {
+
     const file = e.target.files?.[0];
     if (!file) return;
-    stopAllAudio();
-    setFeedback('🎧 오디오 주파수 분석 및 파형 트랙 빌드를 시작합니다...');
-    if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+
     try {
+
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+
+      const ctx = audioCtxRef.current;
+
+      if (ctx.state === "suspended") {
+        await ctx.resume();
+      }
+
       const arrayBuffer = await file.arrayBuffer();
-      const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+
       userAudioBufferRef.current = audioBuffer;
-      setAudioDuration(audioBuffer.duration);
-      setLoopStart(0);
-      setLoopEnd(audioBuffer.duration);
-      setUploadedFileName(file.name);
-      generatePeaks(audioBuffer);
-      setFeedback(`✅ 파형 로드 완료: ${file.name}`);
+
+      setSource("music");
+
+      setFeedback(`✅ ${file.name} 불러오기 완료`);
+
     } catch (err) {
-      setFeedback('❌ 오디오 파일 파싱 실패. 형식을 확인해 주세요.');
+
+      console.error(err);
+
+      setFeedback("❌ 이 기기에서 지원하지 않는 음원입니다.");
+
     }
+
   };
 
   const createPinkNoiseBuffer = (ctx: AudioContext) => {
@@ -252,16 +271,16 @@ export default function App() {
   if (type === "리버브") {
 
     const convolver = ctx.createConvolver();
-    convolver.buffer = createHallReverbIR(ctx, 3.2, 2.5);
+    convolver.buffer = createHallReverbIR(ctx, 2.2, 2.5);
 
     const preDelay = ctx.createDelay();
-    preDelay.delayTime.value = 0.035;
+    preDelay.delayTime.value = 0.35;
 
     input.connect(preDelay);
     preDelay.connect(convolver);
     convolver.connect(wetGain);
 
-    dryGain.gain.value = 0.7;
+    dryGain.gain.value = 1.0;
     wetGain.gain.value = 1.0;
   }
 
@@ -285,7 +304,7 @@ export default function App() {
 
     delay.connect(wetGain);
 
-    dryGain.gain.value = 0.45;
+    dryGain.gain.value = 0.7;
     wetGain.gain.value = 1.0;
   }
 
@@ -297,7 +316,7 @@ export default function App() {
 
     const lfo = ctx.createOscillator();
     lfo.type = "sine";
-    lfo.frequency.value = 0.9;
+    lfo.frequency.value = 0.8;
 
     const depth = ctx.createGain();
     depth.gain.value = 0.0035;
@@ -324,10 +343,10 @@ export default function App() {
 
     const lfo = ctx.createOscillator();
     lfo.type = "sine";
-    lfo.frequency.value = 0.9;
+    lfo.frequency.value = 0.28;
 
     const depth = ctx.createGain();
-    depth.gain.value = 0.0055;
+    depth.gain.value = 0.003;
 
     lfo.connect(depth);
     depth.connect(delay.delayTime);
@@ -341,7 +360,7 @@ export default function App() {
 
     delay.connect(wetGain);
 
-    dryGain.gain.value = 0.25;
+    dryGain.gain.value = 0.7;
     wetGain.gain.value = 1.0;
   }
 
@@ -364,10 +383,10 @@ export default function App() {
 
     const lfo = ctx.createOscillator();
     lfo.type = "triangle";
-    lfo.frequency.value = 1.1;
+    lfo.frequency.value = 0.33;
 
     const depth = ctx.createGain();
-    depth.gain.value = 1800;
+    depth.gain.value = 700;
 
     lfo.connect(depth);
 
@@ -393,8 +412,8 @@ export default function App() {
     const filter = ctx.createBiquadFilter();
 
     filter.type = "bandpass";
-    filter.Q.value = 18;
-    filter.frequency.value = 350;
+    filter.Q.value = 12;
+    filter.frequency.value = 500;
 
     const lfo = ctx.createOscillator();
     lfo.type = "triangle";
@@ -669,12 +688,12 @@ export default function App() {
 
           bypassGain.gain.linearRampToValueAtTime(
               0,
-              ctx.currentTime + 0.35
+              ctx.currentTime + 0.5
           );
 
           eqGain.gain.linearRampToValueAtTime(
               1,
-              ctx.currentTime + 0.35
+              ctx.currentTime + 0.5
           );
 
       }
@@ -708,6 +727,12 @@ export default function App() {
       const targetBand = pool[randomIdx];
 
       let calculatedGain = parseFloat(gainAmt);
+      if (eqMode === "boost") {
+      setSelectedSign("+");
+      }
+      if (eqMode === "cut") {
+      setSelectedSign("-");
+}
       if (eqMode === 'cut') calculatedGain = -calculatedGain;
       if (eqMode === 'random') calculatedGain = Math.random() > 0.5 ? calculatedGain : -calculatedGain;
 
@@ -1169,7 +1194,43 @@ export default function App() {
                   >
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                       <span style={{ fontSize: '12px', color: colors.textSub, fontWeight: '600' }}>🖥️ 오디오 파일을 여기로 드래그 앤 드롭 하거나 클릭하여 선택하세요.</span>
-                      <input type="file" accept="audio/*" onChange={handleFileUpload} style={{ fontSize: '12px', color: colors.textSub, margin: '0 auto' }} />
+                      <>
+                        <button
+                          onClick={async () => {
+                            if (audioCtxRef.current?.state === "suspended") {
+                              await audioCtxRef.current.resume();
+                            }
+                            if (!audioCtxRef.current) {
+                              audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+                            }
+
+                            if (audioCtxRef.current.state === "suspended") {
+                              await audioCtxRef.current.resume();
+                            }
+
+                            fileInputRef.current?.click();
+                          }}
+                          style={{
+                            padding: "10px 18px",
+                            borderRadius: "8px",
+                            border: "none",
+                            cursor: "pointer",
+                            backgroundColor: colors.primary,
+                            color: "white",
+                            fontWeight: "700"
+                          }}
+                        >
+                          📂 음원 선택
+                        </button>
+
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="audio/*,.wav,.mp3,.aac,.m4a,.ogg"
+                          onChange={handleFileUpload}
+                          style={{ display: "none" }}
+                        />
+                      </>
                       {uploadedFileName && <span style={{ fontSize: '12px', color: colors.primary, fontWeight: '800' }}>✔ 적재 완료: {uploadedFileName}</span>}
                     </div>
                     
@@ -1271,15 +1332,62 @@ export default function App() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       <span style={{ fontWeight: '700', color: colors.textSub, fontSize: '12px' }}>⚙️ EQ 변형 성향 스위치</span>
                       <div style={{ display: 'flex', gap: '6px' }}>
-                        {(['boost', 'cut', 'random'] as const).map((em) => (
-                          <button
-                            key={em}
-                            onClick={() => setEqMode(em)}
-                            style={{ flex: 1, padding: '10px', fontSize: '12px', fontWeight: '700', border: 'none', borderRadius: '6px', cursor: 'pointer', backgroundColor: eqMode === em ? colors.accent : colors.btnDefault, color: eqMode === em ? 'white' : colors.textMain }}
-                          >
-                            {em.toUpperCase()}
-                          </button>
-                        ))}
+
+                        <button
+                          onClick={() => setEqMode('random')}
+                          style={{
+                            flex: 1,
+                            padding: '10px',
+                            fontSize: '12px',
+                            fontWeight: '700',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            backgroundColor: eqMode === 'random' ? colors.accent : colors.btnDefault,
+                            color: eqMode === 'random' ? 'white' : colors.textMain
+                          }}
+                        >
+                          RANDOM
+                        </button>
+
+                        {eqMode === 'random' && (
+                          <>
+                            <button
+                              onClick={() => setEqMode('boost')}
+                              style={{
+                                flex: 1,
+                                padding: '10px',
+                                fontSize: '12px',
+                                fontWeight: '700',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                backgroundColor: eqMode === 'boost' ? colors.accent : colors.btnDefault,
+                                color: eqMode === 'boost' ? 'white' : colors.textMain
+                              }}
+                            >
+                              BOOST
+                            </button>
+
+                            <button
+                              onClick={() => setEqMode('cut')}
+                              style={{
+                                flex: 1,
+                                padding: '10px',
+                                fontSize: '12px',
+                                fontWeight: '700',
+                                border: 'none',
+                                borderRadius: '6px',
+                                cursor: 'pointer',
+                                backgroundColor: eqMode === 'cut' ? colors.accent : colors.btnDefault,
+                                color: eqMode === 'cut' ? 'white' : colors.textMain
+                              }}
+                            >
+                              CUT
+                            </button>
+                          </>
+                        )}
+
                       </div>
                     </div>
 
@@ -1349,21 +1457,51 @@ export default function App() {
                </div>
         
                <div style={{ borderTop: `1px dashed ${colors.border}`, paddingTop: '12px', marginTop: '12px' }}>
-                 <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>🎛️ EQ 선택 시 필수: 부스트(+) / 컷(-) 성향 선택</span>
+                 {activeTab === "EQ" && eqMode === "random" && (
+                 <>
+                 <span style={{ display: 'block', fontSize: '12px', fontWeight: '700', color: colors.textSub, marginBottom: '6px' }}>
+                 🎛️ EQ 선택 시 필수 : 부스트(+) / 컷(-) 성향 선택
+                 </span>
+
                  <div style={{ display: 'flex', gap: '8px' }}>
-                   <button 
-                     onClick={() => { setSelectedSign('+'); setSelectedEffector(null); }} 
-                     style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '+' ? '#ff6b6b' : colors.border}`, backgroundColor: selectedSign === '+' ? '#ff6b6b' : colors.btnDefault, color: selectedSign === '+' ? 'white' : colors.textMain }}
-                   >
-                     ➕ BOOST (+)
-                   </button>
-                   <button 
-                     onClick={() => { setSelectedSign('-'); setSelectedEffector(null); }} 
-                     style={{ flex: 1, padding: '14px', fontSize: '15px', fontWeight: '900', borderRadius: '8px', cursor: 'pointer', border: `1px solid ${selectedSign === '-' ? '#3ea6ff' : colors.border}`, backgroundColor: selectedSign === '-' ? '#3ea6ff' : colors.btnDefault, color: selectedSign === '-' ? 'white' : colors.textMain }}
-                   >
-                     ➖ CUT (-)
-                   </button>
+
+                 <button
+                 onClick={() => { setSelectedSign('+'); setSelectedEffector(null); }}
+                 style={{
+                 flex:1,
+                 padding:'14px',
+                 fontSize:'15px',
+                 fontWeight:'900',
+                 borderRadius:'8px',
+                 cursor:'pointer',
+                 border:`1px solid ${selectedSign==='+' ? '#ff6b6b' : colors.border}`,
+                 backgroundColor:selectedSign==='+' ? '#ff6b6b' : colors.btnDefault,
+                 color:selectedSign==='+' ? 'white' : colors.textMain
+                 }}
+                 >
+                 ➕ BOOST (+)
+                 </button>
+
+                 <button
+                 onClick={() => { setSelectedSign('-'); setSelectedEffector(null); }}
+                 style={{
+                 flex:1,
+                 padding:'14px',
+                 fontSize:'15px',
+                 fontWeight:'900',
+                 borderRadius:'8px',
+                 cursor:'pointer',
+                 border:`1px solid ${selectedSign==='-' ? '#3ea6ff' : colors.border}`,
+                 backgroundColor:selectedSign==='-' ? '#3ea6ff' : colors.btnDefault,
+                 color:selectedSign==='-' ? 'white' : colors.textMain
+                 }}
+                 >
+                 ➖ CUT (-)
+                 </button>
+
                  </div>
+                 </>
+                 )}
                </div>
              </div>
            </div>
