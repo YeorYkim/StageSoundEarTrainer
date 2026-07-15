@@ -67,6 +67,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState<boolean>(false);
   const [isBypassActive, setIsBypassActive] = useState<boolean>(false); 
   const [selectedBand, setSelectedBand] = useState<string | null>(null);
+  
   const [selectedEffector, setSelectedEffector] = useState<string | null>(null);
   const [selectedSign, setSelectedSign] = useState<'+' | '-' | null>(null); 
   
@@ -119,6 +120,7 @@ export default function App() {
   const timerIdRef = useRef<any>(null);
   const waveformRef = useRef<HTMLDivElement | null>(null);
   const isDraggingRef = useRef<'start' | 'end' | null>(null);
+  const touchDragRef = useRef<"start" | "end" | null>(null);
 
   // 자동 다음 문제 타이머 추적용 Ref
   const autoNextTimerRef = useRef<any>(null);
@@ -414,7 +416,7 @@ export default function App() {
       postGain.connect(wetGain);
       
       dryGain.gain.value = 0.0;
-      wetGain.gain.value = 0.4;
+      wetGain.gain.value = 0.3;
 
     } else {
       dryGain.gain.value = 1.0;
@@ -1250,28 +1252,51 @@ export default function App() {
                           ref={waveformRef} 
                           onMouseDown={(e) => handleWaveformTouchStart(e)} 
                           onTouchStart={(e) => {
-                            if (audioDuration <= 0) return;
+                            e.preventDefault();
+
                             const touch = e.touches[0];
                             const rect = e.currentTarget.getBoundingClientRect();
-                            const offsetX = touch.clientX - rect.left;
-                            const clickedTime = Math.max(0, Math.min(audioDuration, (offsetX / rect.width) * audioDuration));
-                            if (Math.abs(clickedTime - loopStart) < Math.abs(clickedTime - loopEnd)) {
-                              setLoopStart(Math.min(clickedTime, loopEnd - 0.5));
-                            } else {
-                              setLoopEnd(Math.max(clickedTime, loopStart + 0.5));
-                            }
+
+                            const x = touch.clientX - rect.left;
+                            const t = Math.max(
+                              0,
+                              Math.min(audioDuration, (x / rect.width) * audioDuration)
+                            );
+
+                            touchDragRef.current =
+                              Math.abs(t - loopStart) < Math.abs(t - loopEnd)
+                                ? "start"
+                                : "end";
                           }}
                           onTouchMove={(e) => {
-                            if (audioDuration <= 0) return;
+
+                            e.preventDefault();
+
+                            if (!touchDragRef.current) return;
+
                             const touch = e.touches[0];
                             const rect = e.currentTarget.getBoundingClientRect();
-                            const offsetX = touch.clientX - rect.left;
-                            const clickedTime = Math.max(0, Math.min(audioDuration, (offsetX / rect.width) * audioDuration));
-                            if (Math.abs(clickedTime - loopStart) < Math.abs(clickedTime - loopEnd)) {
-                              setLoopStart(Math.min(clickedTime, loopEnd - 0.2));
+
+                            const x = touch.clientX - rect.left;
+
+                            const t = Math.max(
+                              0,
+                              Math.min(audioDuration, (x / rect.width) * audioDuration)
+                            );
+
+                            if (touchDragRef.current === "start") {
+                              setLoopStart(Math.min(t, loopEnd - 0.2));
                             } else {
-                              setLoopEnd(Math.max(clickedTime, loopStart + 0.2));
+                              setLoopEnd(Math.max(t, loopStart + 0.2));
                             }
+
+                          }}
+                          onTouchEnd={() => {
+                              touchDragRef.current = null;
+                          }}
+
+                          onTouchCancel={() => {
+                              touchDragRef.current = null;
                           }}
                           style={{ position: 'relative', height: '65px', backgroundColor: colors.waveformBg, borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 8px', cursor: 'pointer', overflow: 'visible', border: `1px solid ${colors.border}`, userSelect: 'none', touchAction: 'none' }}
                         >
