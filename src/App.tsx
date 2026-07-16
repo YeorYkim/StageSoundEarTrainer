@@ -667,13 +667,21 @@ export default function App() {
 
     if (isPlaying) {
       stopAudio();
+
+      if (!isReplayingWrong) {
+        currentAnswerRef.current = null;
+      }
+
       setIsReplayingWrong(false);
-      currentAnswerRef.current = null; 
+
       setFeedback(' 문제 재생이 취소되었습니다. 다시 출제하려면 버튼을 누르세요.');
       return;
     }
-    stopPreviewAudio(); 
-    setIsReplayingWrong(false);
+    stopPreviewAudio();
+
+    if (!isReplayingWrong) {
+      setIsReplayingWrong(false);
+    }
 
     if (activeTab !== 'SINE' && source === 'music' && !userAudioBufferRef.current) {
       setFeedback(' 아래 시그널 소스 패널에서 음원 파일을 먼저 업로드해 주세요.');
@@ -762,20 +770,33 @@ export default function App() {
       handleFileUpload({ target: { files: e.dataTransfer.files } } as any);
     }
   };
-
+  
   const handleReplayWrongQuestion = async () => {
     if (!wrongQuestionCache) return;
+
+    setAutoNext(false);
+
     if (isPlaying) {
       stopAudio();
+
       if (isReplayingWrong) {
         setIsReplayingWrong(false);
         return;
       }
     }
+
     stopPreviewAudio();
+
     setIsReplayingWrong(true);
-    setIsSubmitLocked(true); // 락 발동
-    await playAudioCore(wrongQuestionCache.tab, wrongQuestionCache.target, wrongQuestionCache.gain || 0, wrongQuestionCache.level || 'EASY', true);
+    setIsPreviewStage(false);
+
+    await playAudioCore(
+      wrongQuestionCache.tab,
+      wrongQuestionCache.target,
+      wrongQuestionCache.gain || 0,
+      wrongQuestionCache.level || 'EASY',
+      true
+    );
   };
 
   const toggleBypass = () => {
@@ -812,7 +833,9 @@ export default function App() {
     masterGainNodeRef.current = null;
     limiterNodeRef.current = null;
     setIsPlaying(false);
-    setIsPreviewStage(false);
+    if (!isReplayingWrong) {
+      setIsPreviewStage(false);
+    }
     setIsBypassActive(false);
     setProgress(0);
     if (timerIdRef.current) {
@@ -874,51 +897,83 @@ export default function App() {
   };
 
   const handleSubmit = () => {
-    if (isSubmitLocked) return;
+  if (!currentAnswerRef.current) {
+    setFeedback('❌ 먼저 문제를 재생해 주세요.');
+    return;
+  }
 
-    if (!currentAnswerRef.current) {
-      setFeedback(' 활성화된 돌발 문제가 없습니다. 먼저 [문제 재생]을 진행해 주세요.');
+  let isCorrect = false;
+  let chosenValue = '';
+
+  const effectiveTab =
+    activeTab === 'RANDOM'
+      ? randomActualTab
+      : activeTab;
+
+  if (effectiveTab === 'EQ') {
+
+    if (!selectedBand) {
+      setFeedback('주파수를 선택하세요.');
       return;
     }
 
-    if (!selectedBand && !selectedEffector) {
-      setFeedback(' 주파수 대역 또는 이펙터를 선택해 주세요.');
-      return;
-    }
+    if (eqMode === 'random') {
 
-    let isCorrect = false;
-    let chosenValue = '';
-    const effectiveTab = activeTab === 'RANDOM' ? randomActualTab : activeTab;
+      if (!selectedSign) {
+        setFeedback('BOOST / CUT을 선택하세요.');
+        return;
+      }
 
-    if (effectiveTab === 'EQ') {
-      if (!selectedBand || !selectedSign) {
-        isCorrect = false;
-        chosenValue = selectedEffector ? `이펙터오선택: ${selectedEffector}` : '유형오선택';
-      } else {
-        const targetGain = currentAppliedGainRef.current || 0;
-        const correctSign = targetGain >= 0 ? '+' : '-';
-        isCorrect = (selectedBand === currentAnswerRef.current) && (selectedSign === correctSign);
-        chosenValue = `${selectedSign}${selectedBand}`;
-      }
-    } else if (effectiveTab === 'SINE') {
-      if (!selectedBand) {
-        isCorrect = false;
-        chosenValue = selectedEffector ? `이펙터오선택: ${selectedEffector}` : '유형오선택';
-      } else {
-        isCorrect = selectedBand === currentAnswerRef.current;
-        chosenValue = selectedBand;
-      }
+      const correctSign =
+        currentAppliedGainRef.current >= 0 ? '+' : '-';
+
+      isCorrect =
+        selectedBand === currentAnswerRef.current &&
+        selectedSign === correctSign;
+
+      chosenValue = `${selectedSign} ${selectedBand}`;
+
     } else {
-      if (!selectedEffector) {
-        isCorrect = false;
-        chosenValue = selectedBand ? `${selectedSign || ''}${selectedBand}` : '유형오선택';
-      } else {
-        isCorrect = selectedEffector === currentAnswerRef.current;
-        chosenValue = selectedEffector;
-      }
+
+      isCorrect =
+        selectedBand === currentAnswerRef.current;
+
+      chosenValue = selectedBand;
+
     }
 
-    const currentTargetKey = `${effectiveTab}_${currentAnswerRef.current}`;
+  } else if (effectiveTab === 'SINE') {
+
+    if (!selectedBand) {
+      setFeedback('주파수를 선택하세요.');
+      return;
+    }
+
+    isCorrect =
+      selectedBand === currentAnswerRef.current;
+
+    chosenValue = selectedBand;
+
+  } else {
+
+    if (!selectedEffector) {
+      setFeedback('이펙터를 선택하세요.');
+      return;
+    }
+
+    isCorrect =
+      selectedEffector === currentAnswerRef.current;
+
+    chosenValue = selectedEffector;
+
+  }
+  if (effectiveTab === 'EQ') {
+    setSelectedBand(null);
+    setSelectedSign(null);
+  } else {
+    setSelectedEffector(null);
+  }
+  const currentTargetKey = `${effectiveTab}_${currentAnswerRef.current}`;
 
     // 정답 판정 후 점수 데이터 및 진행 라운드 상태 수치 누적
     if (isCorrect) {
@@ -1384,11 +1439,40 @@ export default function App() {
                         const isChecked = customSelected.includes(b);
                         const activeColor = getFreqRegion(b) === 'low' ? colors.lowFreq : getFreqRegion(b) === 'mid' ? colors.midFreq : colors.highFreq;
                         return (
-                          <span key={b} style={{ fontSize: '10px', padding: '3px 6px', borderRadius: '4px', backgroundColor: isChecked ? activeColor : (isDark ? '#1e222b' : '#e2e8f0'), color: isChecked ? '#000' : colors.textMain, fontWeight: '700', cursor: 'pointer' }}
-                                onClick={() => {
-                                  let next = isChecked ? customSelected.filter(x => x !== b) : [...customSelected, b];
-                                  setCustomSelected(next.sort((x, y) => parseFreq(x) - parseFreq(y)));
-                                }}>{b}</span>
+                          <button
+                            key={b}
+                            onClick={() => {
+                              let next: string[];
+
+                              if (isChecked) {
+                                next = customSelected.filter(x => x !== b);
+
+                                if (next.length === 0) {
+                                  next = [b];
+                                }
+                              } else {
+                                next = [...customSelected, b];
+                              }
+
+                              setCustomSelected(
+                                next.sort((x, y) => parseFreq(x) - parseFreq(y))
+                              );
+                            }}
+                            style={{
+                              fontSize: '10px',
+                              padding: '3px 6px',
+                              borderRadius: '4px',
+                              border: 'none',
+                              cursor: 'pointer',
+                              backgroundColor: isChecked
+                                ? activeColor
+                                : (isDark ? '#1e222b' : '#e2e8f0'),
+                              color: isChecked ? '#000' : colors.textMain,
+                              fontWeight: '700'
+                            }}
+                          >
+                            {b}
+                          </button>
                         );
                       })}
                     </div>
@@ -1598,18 +1682,37 @@ export default function App() {
             </button>
           ) : (
             <button 
-              onClick={isPreviewStage ? togglePlayPause : handleSubmit} 
+              onClick={
+              isReplayingWrong
+                ? togglePlayPause
+                : (isPreviewStage ? togglePlayPause : handleSubmit)
+              } 
               style={{ 
                 position: 'relative', width: '100%', padding: '18px', fontSize: '16px', fontWeight: '800', color: 'white', border: 'none', borderRadius: '10px', overflow: 'hidden',
-                background: isPlaying && isPreviewStage 
-                  ? `linear-gradient(to right, #0d47a1 ${progress}%, #2c303d ${progress}%)`
-                  : colors.accent,
+                background:
+                  isReplayingWrong
+                    ? (
+                        isPlaying
+                          ? `linear-gradient(to right, #0d47a1 ${progress}%, #2c303d ${progress}%)`
+                          : colors.primary
+                      )
+                    : (
+                        isPlaying && isPreviewStage
+                          ? `linear-gradient(to right, #0d47a1 ${progress}%, #2c303d ${progress}%)`
+                          : colors.accent
+                      ),
                 boxShadow: '0 4px 12px rgba(230,126,34,0.15)',
                 cursor: 'pointer'
               }}
             >
               <span style={{ position: 'relative', zIndex: 3 }}>
-                {isPlaying && isPreviewStage ? '■ 문제 재생 중 (Bypass Pre-listen)' : '정답 제출'}
+                {isReplayingWrong
+                  ? (isPlaying ? '■ 문제 재생 중' : '▶ 문제 재생')
+                  : (
+                      isPlaying && isPreviewStage
+                        ? '■ 문제 재생 중'
+                        : '정답 제출'
+                    )}
               </span>
             </button>
           )}
