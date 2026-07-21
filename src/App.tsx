@@ -125,13 +125,79 @@ export default function App() {
   // 자동 다음 문제 타이머 추적용 Ref
   const autoNextTimerRef = useRef<any>(null);
 
+  // State Closure를 예방하기 위한 Dynamic Refs 정의
+  const isLoopEnabledRef = useRef<boolean>(isLoopEnabled);
+  const loopStartRef = useRef<number>(loopStart);
+  const loopEndRef = useRef<number>(loopEnd);
+
   useEffect(() => {
+    isLoopEnabledRef.current = isLoopEnabled;
+  }, [isLoopEnabled]);
+
+  useEffect(() => {
+    loopStartRef.current = loopStart;
+  }, [loopStart]);
+
+  useEffect(() => {
+    loopEndRef.current = loopEnd;
+  }, [loopEnd]);
+
+  // 실시간 Waveform 조작값 반영
+  useEffect(() => {
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.loop = isLoopEnabled;
+    }
+  }, [isLoopEnabled]);
+
+  useEffect(() => {
+    if (sourceNodeRef.current && sourceNodeRef.current.loop) {
+      sourceNodeRef.current.loopStart = loopStart;
+    }
+  }, [loopStart]);
+
+  useEffect(() => {
+    if (sourceNodeRef.current && sourceNodeRef.current.loop) {
+      sourceNodeRef.current.loopEnd = loopEnd;
+    }
+  }, [loopEnd]);
+
+  // [수정사항] 모바일 잠금 해제 및 브라우저 복귀 시 오디오 재생 복구를 위한 이벤트 리스너 추가
+  useEffect(() => {
+    const resumeAudioOnVisibility = async () => {
+      if (document.visibilityState === 'visible' && audioCtxRef.current) {
+        if (audioCtxRef.current.state === 'suspended') {
+          try {
+            await audioCtxRef.current.resume();
+          } catch (e) {
+            console.warn("Visibility change resume failed:", e);
+          }
+        }
+      }
+    };
+    
+    document.addEventListener('visibilitychange', resumeAudioOnVisibility);
+    window.addEventListener('focus', resumeAudioOnVisibility);
+
     return () => { 
+      document.removeEventListener('visibilitychange', resumeAudioOnVisibility);
+      window.removeEventListener('focus', resumeAudioOnVisibility);
       if (timerIdRef.current) clearInterval(timerIdRef.current); 
       if (autoNextTimerRef.current) clearTimeout(autoNextTimerRef.current);
       stopAllAudio();
     };
   }, []);
+
+  // [수정사항] 일관된 오디오 컨텍스트 획득 및 잠금 해제를 위한 공통 헬퍼 함수
+  const ensureAudioContext = async (): Promise<AudioContext> => {
+    if (!audioCtxRef.current) {
+      audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    const ctx = audioCtxRef.current;
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+    }
+    return ctx;
+  };
 
   const generatePeaks = (buffer: AudioBuffer) => {
     const rawData = buffer.getChannelData(0); 
@@ -155,13 +221,7 @@ export default function App() {
     if (!file) return;
 
     try {
-      if (!audioCtxRef.current) {
-        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      const ctx = audioCtxRef.current;
-      if (ctx.state === "suspended") {
-        await ctx.resume();
-      }
+      const ctx = await ensureAudioContext(); // [수정] 공통 함수 사용
       const arrayBuffer = await file.arrayBuffer();
       const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
       userAudioBufferRef.current = audioBuffer;
@@ -206,37 +266,41 @@ export default function App() {
     return [...customSelected].sort((a, b) => parseFreq(a) - parseFreq(b));
   };
 
-  const togglePreviewPlay = () => {
+  const togglePreviewPlay = async () => {
     if (isPreviewPlaying) {
       stopPreviewAudio();
       return;
     }
-    if (!userAudioBufferRef.current || !audioCtxRef.current) return;
+    if (!userAudioBufferRef.current) return;
     stopAudio(); 
 
-    const ctx = audioCtxRef.current;
-    const internalLimiter = ctx.createDynamicsCompressor();
-    internalLimiter.threshold.setValueAtTime(-4, ctx.currentTime);
-    internalLimiter.knee.setValueAtTime(0, ctx.currentTime);
-    internalLimiter.ratio.setValueAtTime(20, ctx.currentTime);
-    internalLimiter.attack.setValueAtTime(0.003, ctx.currentTime);
-    internalLimiter.release.setValueAtTime(0.05, ctx.currentTime);
-    internalLimiter.connect(ctx.destination);
+    try {
+      const ctx = await ensureAudioContext(); // [수정] 공통 함수 사용
+      const internalLimiter = ctx.createDynamicsCompressor();
+      internalLimiter.threshold.setValueAtTime(-4, ctx.currentTime);
+      internalLimiter.knee.setValueAtTime(0, ctx.currentTime);
+      internalLimiter.ratio.setValueAtTime(20, ctx.currentTime);
+      internalLimiter.attack.setValueAtTime(0.003, ctx.currentTime);
+      internalLimiter.release.setValueAtTime(0.05, ctx.currentTime);
+      internalLimiter.connect(ctx.destination);
 
-    const pSource = ctx.createBufferSource();
-    pSource.buffer = userAudioBufferRef.current;
-    
-    if (isLoopEnabled) {
-      pSource.loop = true;
-      pSource.loopStart = loopStart;
-      pSource.loopEnd = loopEnd;
+      const pSource = ctx.createBufferSource();
+      pSource.buffer = userAudioBufferRef.current;
+      
+      if (isLoopEnabled) {
+        pSource.loop = true;
+        pSource.loopStart = loopStart;
+        pSource.loopEnd = loopEnd;
+      }
+
+      pSource.connect(internalLimiter);
+      pSource.start(0, loopStart);
+      previewSourceNodeRef.current = pSource;
+      setIsPreviewPlaying(true);
+      setFeedback(' [미리듣기] 설정한 구간을 이펙트 없는 오리지널 상태로 모니터링 중입니다. (리미터 활성화)');
+    } catch (e) {
+      console.error(e);
     }
-
-    pSource.connect(internalLimiter);
-    pSource.start(0, loopStart);
-    previewSourceNodeRef.current = pSource;
-    setIsPreviewPlaying(true);
-    setFeedback(' [미리듣기] 설정한 구간을 이펙트 없는 오리지널 상태로 모니터링 중입니다. (리미터 활성화)');
   };
 
   const stopPreviewAudio = () => {
@@ -336,6 +400,7 @@ export default function App() {
       lfo.connect(depth);
       depth.connect(delay.delayTime);
       lfo.start();
+      input.connect(input);
       input.connect(delay);
       delay.connect(feedback);
       feedback.connect(delay);
@@ -438,11 +503,26 @@ export default function App() {
   };
 
   const playAudioCore = async (modeType: 'EQ' | 'SINE' | 'EFFECTOR', target: string, appliedGain: number, targetLevel: 'EASY' | 'HARD' | 'CUSTOM', isReplayMode: boolean) => {
-    if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const ctx = audioCtxRef.current;
+    // [수정사항] 새로운 음이 생성되기 전에 기존 재생 대기를 완벽하게 정제
+    stopAudio();
 
-    currentAnswerRef.current = target;
-    currentAppliedGainRef.current = appliedGain;
+    let ctx;
+    try {
+      ctx = await ensureAudioContext(); // [수정] 오디오 세션 즉각 수명 검사 및 재가동
+    } catch (err) {
+      console.error("AudioContext initialization failed:", err);
+      setFeedback("오디오 장치를 활성화하지 못했습니다. 화면을 한 번 터치한 후 다시 시도해 주세요.");
+      setIsSubmitLocked(false);
+      return;
+    }
+
+    if (!isReplayMode) {
+      currentAnswerRef.current = target;
+      currentAppliedGainRef.current = appliedGain;
+      setIsReplayingWrong(false);
+    } else {
+      setIsReplayingWrong(true);
+    }
 
     const safetyLimiter = ctx.createDynamicsCompressor();
     safetyLimiter.threshold.setValueAtTime(-4, ctx.currentTime); 
@@ -472,6 +552,7 @@ export default function App() {
 
     setIsPlaying(true);
     setIsBypassActive(false);
+    setSessionStage('playing');
 
     if (modeType === 'SINE') {
       setIsPreviewStage(false);
@@ -490,7 +571,6 @@ export default function App() {
       oscillatorNodeRef.current = osc;
       
       setFeedback(` [순수 사인파 오실레이터] 단일 고정 주파수(${target})가 발생 중입니다. 정답 대역을 맞추어 보세요!`);
-      // 오디오 연결 수립 완료 즉시 락 해제
       setIsSubmitLocked(false);
       return;
     }
@@ -531,10 +611,10 @@ export default function App() {
 
       timerIdRef.current = setInterval(() => {
         if (!sourceNodeRef.current) return;
-        let pos = ctx.currentTime - startTime + loopStart;
-        if (isLoopEnabled) {
-          const len = loopEnd - loopStart;
-          pos = loopStart + ((pos - loopStart) % len);
+        let pos = ctx.currentTime - startTime + loopStartRef.current;
+        if (isLoopEnabledRef.current) {
+          const len = loopEndRef.current - loopStartRef.current;
+          pos = loopStartRef.current + ((pos - loopStartRef.current) % len);
         }
         setPlaybackPosition(pos);
       }, 16);
@@ -556,7 +636,6 @@ export default function App() {
         const totalMs = source === 'pink' ? 5000 : 8000; 
         const intervalMs = 50; 
 
-        // 재생 시작 후 1초(1000ms) 지연을 두어 완벽한 수립을 보장하고 락을 안전하게 해제합니다.
         let isLockedReleased = false;
 
         timerIdRef.current = setInterval(() => {
@@ -609,10 +688,10 @@ export default function App() {
       }
       timerIdRef.current = setInterval(() => {
         if (!sourceNodeRef.current) return;
-        let pos = ctx.currentTime - startTime + loopStart;
-        if (isLoopEnabled) {
-          const len = loopEnd - loopStart;
-          pos = loopStart + ((pos - loopStart) % len);
+        let pos = ctx.currentTime - startTime + loopStartRef.current;
+        if (isLoopEnabledRef.current) {
+          const len = loopEndRef.current - loopStartRef.current;
+          pos = loopStartRef.current + ((pos - loopStartRef.current) % len);
         }
         setPlaybackPosition(pos);
       }, 16);
@@ -665,6 +744,19 @@ export default function App() {
   const togglePlayPause = async () => {
     if (isSubmitLocked) return;
 
+    // [수정사항] 유저 상호작용 지점에서 선제적으로 비정상 중지된 오디오 복구
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      try {
+        await audioCtxRef.current.resume();
+      } catch (e) {
+        console.warn(e);
+      }
+    }
+
+    if (sessionStage === 'finished') {
+      resetFullSession();
+    }
+
     if (isPlaying) {
       stopAudio();
 
@@ -673,7 +765,6 @@ export default function App() {
       }
 
       setIsReplayingWrong(false);
-
       setFeedback(' 문제 재생이 취소되었습니다. 다시 출제하려면 버튼을 누르세요.');
       return;
     }
@@ -696,8 +787,7 @@ export default function App() {
     setSelectedEffector(null);
     setSelectedSign(null);
 
-    // 새롭게 문제를 제출(발생)시키는 핸들러이며 진행 라운드 상태나 스코어는 건드리지 않습니다.
-    setIsSubmitLocked(true); // 1~3초 내의 물리 락 수립을 위한 잠금
+    setIsSubmitLocked(true); 
 
     if (activeTab === 'EQ' || activeTab === 'SINE') {
       const pool = getCurrentPool();
@@ -775,6 +865,10 @@ export default function App() {
     if (!wrongQuestionCache) return;
 
     setAutoNext(false);
+    if (autoNextTimerRef.current) {
+      clearTimeout(autoNextTimerRef.current);
+      autoNextTimerRef.current = null;
+    }
 
     if (isPlaying) {
       stopAudio();
@@ -799,8 +893,14 @@ export default function App() {
     );
   };
 
-  const toggleBypass = () => {
+  const toggleBypass = async () => { // [수정] async 추가 및 안전성 보강
     if (!isPlaying || !eqGainNodeRef.current || !bypassGainNodeRef.current) return;
+
+    // [수정사항] 유저 탭 이벤트 발생 시점에 소실된 재생상태 잠금 해제
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      try { await audioCtxRef.current.resume(); } catch(e){}
+    }
+
     if (isBypassActive) {
       eqGainNodeRef.current.gain.value = 1.0;
       bypassGainNodeRef.current.gain.value = 0.0;
@@ -843,6 +943,7 @@ export default function App() {
       timerIdRef.current = null;
     }
     setPlaybackPosition(0);
+    setIsSubmitLocked(false); 
   };
 
   const triggerNextQuestion = async (forcedTab?: 'EQ' | 'SINE' | 'EFFECTOR', forcedTarget?: string) => {
@@ -855,7 +956,21 @@ export default function App() {
     setSelectedSign(null);
     stopAllAudio();
 
-    setIsSubmitLocked(true); // 오디오 로드 중 락 상태를 유지합니다.
+    // [수정사항] 화면 꺼짐이나 슬립모드에 의해 백그라운드에서 오디오 세션이 완전히 잠긴 경우 처리
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      try {
+        // 비동기 복구 시도
+        await audioCtxRef.current.resume();
+      } catch (e) {
+        // 만약 OS 차원에서 차단될 경우, 대기 루프를 해제하고 수동 시작할 수 있게 유도
+        setFeedback('화면 잠금 등으로 오디오 가동이 차단되었습니다. 아래 [문제 재생] 버튼을 눌러 청음을 계속해 주세요.');
+        setIsSubmitLocked(false);
+        setIsPlaying(false);
+        return;
+      }
+    }
+
+    setIsSubmitLocked(true); 
 
     let targetTab = forcedTab || activeTab;
     
@@ -897,85 +1012,86 @@ export default function App() {
   };
 
   const handleSubmit = () => {
-  if (!currentAnswerRef.current) {
-    setFeedback('❌ 먼저 문제를 재생해 주세요.');
-    return;
-  }
-
-  let isCorrect = false;
-  let chosenValue = '';
-
-  const effectiveTab =
-    activeTab === 'RANDOM'
-      ? randomActualTab
-      : activeTab;
-
-  if (effectiveTab === 'EQ') {
-
-    if (!selectedBand) {
-      setFeedback('주파수를 선택하세요.');
+    if (!currentAnswerRef.current) {
+      setFeedback(' 먼저 문제를 재생해 주세요.');
       return;
     }
 
-    if (eqMode === 'random') {
+    let isCorrect = false;
+    let chosenValue = '';
 
-      if (!selectedSign) {
-        setFeedback('BOOST / CUT을 선택하세요.');
+    const effectiveTab =
+      activeTab === 'RANDOM'
+        ? randomActualTab
+        : activeTab;
+
+    if (effectiveTab === 'EQ') {
+
+      if (!selectedBand) {
+        setFeedback('주파수를 선택하세요.');
         return;
       }
 
-      const correctSign =
-        currentAppliedGainRef.current >= 0 ? '+' : '-';
+      const isSignRequired = (activeTab === 'RANDOM') || (eqMode === 'random');
 
-      isCorrect =
-        selectedBand === currentAnswerRef.current &&
-        selectedSign === correctSign;
+      if (isSignRequired) {
 
-      chosenValue = `${selectedSign} ${selectedBand}`;
+        if (!selectedSign) {
+          setFeedback('BOOST / CUT을 선택하세요.');
+          return;
+        }
 
-    } else {
+        const correctSign =
+          currentAppliedGainRef.current >= 0 ? '+' : '-';
+
+        isCorrect =
+          selectedBand === currentAnswerRef.current &&
+          selectedSign === correctSign;
+
+        chosenValue = `${selectedSign} ${selectedBand}`;
+
+      } else {
+
+        isCorrect =
+          selectedBand === currentAnswerRef.current;
+
+        chosenValue = selectedBand;
+
+      }
+
+    } else if (effectiveTab === 'SINE') {
+
+      if (!selectedBand) {
+        setFeedback('주파수를 선택하세요.');
+        return;
+      }
 
       isCorrect =
         selectedBand === currentAnswerRef.current;
 
       chosenValue = selectedBand;
 
+    } else {
+
+      if (!selectedEffector) {
+        setFeedback('이펙터를 선택하세요.');
+        return;
+      }
+
+      isCorrect =
+        selectedEffector === currentAnswerRef.current;
+
+      chosenValue = selectedEffector;
+
     }
-
-  } else if (effectiveTab === 'SINE') {
-
-    if (!selectedBand) {
-      setFeedback('주파수를 선택하세요.');
-      return;
+    if (effectiveTab === 'EQ') {
+      setSelectedBand(null);
+      setSelectedSign(null);
+    } else {
+      setSelectedEffector(null);
     }
+    const currentTargetKey = `${effectiveTab}_${currentAnswerRef.current}`;
 
-    isCorrect =
-      selectedBand === currentAnswerRef.current;
-
-    chosenValue = selectedBand;
-
-  } else {
-
-    if (!selectedEffector) {
-      setFeedback('이펙터를 선택하세요.');
-      return;
-    }
-
-    isCorrect =
-      selectedEffector === currentAnswerRef.current;
-
-    chosenValue = selectedEffector;
-
-  }
-  if (effectiveTab === 'EQ') {
-    setSelectedBand(null);
-    setSelectedSign(null);
-  } else {
-    setSelectedEffector(null);
-  }
-  const currentTargetKey = `${effectiveTab}_${currentAnswerRef.current}`;
-
-    // 정답 판정 후 점수 데이터 및 진행 라운드 상태 수치 누적
     if (isCorrect) {
       setScore(prev => ({ correct: prev.correct + 1, total: prev.total + 1 }));
       setStreak(prev => prev + 1);
@@ -1007,12 +1123,17 @@ export default function App() {
       });
     }
 
-    // 통계가 올라갔으므로 게임 끝내기 조건 체크
     if (currentQuestionNo >= 20) {
       setSessionStage('finished');
       setFeedback(' 20문항으로 구성된 오디오 매칭 세션이 종료되었습니다. 하단의 성적 분석을 확인하세요.');
       stopAllAudio();
       setIsSubmitLocked(false);
+      
+      currentAnswerRef.current = null;
+      setSelectedBand(null);
+      setSelectedSign(null);
+      setSelectedEffector(null);
+      setIsReplayingWrong(false);
     } else {
       setCurrentQuestionNo(prev => prev + 1);
       stopAllAudio();
@@ -1022,7 +1143,6 @@ export default function App() {
       setSelectedEffector(null);
       setIsReplayingWrong(false);
 
-      // 자동 다음 문제 타이머 락 조건 해제
       setIsSubmitLocked(false);
 
       if (autoNext) {
@@ -1182,6 +1302,12 @@ export default function App() {
               setSelectedBand(null);
               setSelectedEffector(null);
               setSelectedSign(null);
+
+              resetFullSession();
+              currentAnswerRef.current = null;
+              setIsReplayingWrong(false);
+              setLastResult({ status: 'idle', message: '' });
+              setFeedback('준비 완료. 아래 [문제 재생] 버튼을 누르면 청음이 시작됩니다.');
             }}
             style={{
               flex: 1, padding: '14px 4px', fontSize: '13px', fontWeight: '800', borderRadius: '10px', border: 'none',
@@ -1205,7 +1331,7 @@ export default function App() {
           <span style={{ color: colors.primary, fontSize: '15px' }}>{currentQuestionNo} / 20 문제</span>
         </div>
 
-        {/* 재생 시그널 소스 제어판 (사인파 모드 혹은 랜덤모드 분기가 아닐 때 노출) */}
+        {/* 재생 시그널 소스 제어판 */}
         {activeTab !== 'SINE' && (
           <section style={{ backgroundColor: colors.cardBg, borderRadius: '12px', padding: '18px', border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isSourcePanelVisible ? `1px solid ${colors.border}` : 'none', paddingBottom: isSourcePanelVisible ? '12px' : '0' }}>
@@ -1265,12 +1391,9 @@ export default function App() {
                       <>
                         <button
                           onClick={async () => {
-                            if (audioCtxRef.current?.state === "suspended") {
-                              await audioCtxRef.current.resume();
-                            }
-                            if (!audioCtxRef.current) {
-                              audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-                            }
+                            try {
+                              await ensureAudioContext(); // [수정] 업로드 버튼 트리거 시 오디오 객체 미리 획득
+                            } catch (e) {}
                             fileInputRef.current?.click();
                           }}
                           style={{
@@ -1324,14 +1447,11 @@ export default function App() {
                                 : "end";
                           }}
                           onTouchMove={(e) => {
-
                             e.preventDefault();
-
                             if (!touchDragRef.current) return;
 
                             const touch = e.touches[0];
                             const rect = e.currentTarget.getBoundingClientRect();
-
                             const x = touch.clientX - rect.left;
 
                             const t = Math.max(
@@ -1344,12 +1464,10 @@ export default function App() {
                             } else {
                               setLoopEnd(Math.max(t, loopStart + 0.2));
                             }
-
                           }}
                           onTouchEnd={() => {
                               touchDragRef.current = null;
                           }}
-
                           onTouchCancel={() => {
                               touchDragRef.current = null;
                           }}
@@ -1381,7 +1499,7 @@ export default function App() {
           </section>
         )}
 
-        {/* 난이도 커스텀 조절 조작 패널 (EQ, SINE, RANDOM 목록에서 노출) */}
+        {/* 난이도 커스텀 조절 조작 패널 */}
         {activeTab !== 'EFFECTOR' && (
           <section style={{ backgroundColor: colors.cardBg, borderRadius: '12px', padding: '18px', border: `1px solid ${colors.border}`, display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: isFilterPanelVisible ? `1px solid ${colors.border}` : 'none', paddingBottom: isFilterPanelVisible ? '12px' : '0' }}>
@@ -1682,37 +1800,18 @@ export default function App() {
             </button>
           ) : (
             <button 
-              onClick={
-              isReplayingWrong
-                ? togglePlayPause
-                : (isPreviewStage ? togglePlayPause : handleSubmit)
-              } 
+              onClick={isPreviewStage ? togglePlayPause : handleSubmit} 
               style={{ 
                 position: 'relative', width: '100%', padding: '18px', fontSize: '16px', fontWeight: '800', color: 'white', border: 'none', borderRadius: '10px', overflow: 'hidden',
-                background:
-                  isReplayingWrong
-                    ? (
-                        isPlaying
-                          ? `linear-gradient(to right, #0d47a1 ${progress}%, #2c303d ${progress}%)`
-                          : colors.primary
-                      )
-                    : (
-                        isPlaying && isPreviewStage
-                          ? `linear-gradient(to right, #0d47a1 ${progress}%, #2c303d ${progress}%)`
-                          : colors.accent
-                      ),
+                background: isPlaying && isPreviewStage
+                  ? `linear-gradient(to right, #0d47a1 ${progress}%, #2c303d ${progress}%)`
+                  : colors.accent,
                 boxShadow: '0 4px 12px rgba(230,126,34,0.15)',
                 cursor: 'pointer'
               }}
             >
               <span style={{ position: 'relative', zIndex: 3 }}>
-                {isReplayingWrong
-                  ? (isPlaying ? '■ 문제 재생 중' : '▶ 문제 재생')
-                  : (
-                      isPlaying && isPreviewStage
-                        ? '■ 문제 재생 중'
-                        : '정답 제출'
-                    )}
+                {isPlaying && isPreviewStage ? '■ 문제 재생 중' : '정답 제출'}
               </span>
             </button>
           )}
